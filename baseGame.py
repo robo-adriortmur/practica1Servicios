@@ -125,6 +125,46 @@ def calcular_puntuacion(x, y, diana):
 
     return max(10, puntuacion)
 
+# Calcular posición relativa
+def distancia(p1, p2):
+    return math.hypot(
+        p1.x - p2.x,
+        p1.y - p2.y
+    )
+
+# Detectar pulgar abajo
+def pulgar_abierto(hand_landmarks):
+
+    lm = hand_landmarks.landmark
+
+    # Punta del pulgar
+    thumb_tip = lm[4]
+
+    # Punta del índice
+    index_tip = lm[8]
+
+    # Referencia para normalizar el tamaño de la mano
+    wrist = lm[0]
+    middle_mcp = lm[9]
+
+    # Distancia pulgar - índice
+    d_thumb_index = distancia(
+        thumb_tip,
+        index_tip
+    )
+
+    # Tamaño de la mano
+    hand_size = distancia(
+        wrist,
+        middle_mcp
+    )
+
+    # Distancia relativa
+    d_relativa = d_thumb_index / hand_size
+
+    # Umbral
+    return d_relativa > 0.8
+
 
 # =========================================================
 # HILO DE MEDIAPIPE + OPENCV
@@ -179,6 +219,18 @@ def camara_thread():
 
                 # Landmark 8 = punta del dedo índice
                 index_finger = hand.landmark[8]
+                thumb_finger = hand.landmark[4]
+
+
+
+                #print("dedo indíce")
+
+                #print(index_finger)
+
+                print("dedo pulgar x ")
+                print(thumb_finger)
+
+
 
                 height, width, _ = frame.shape
 
