@@ -4,7 +4,7 @@ import math
 import mediapipe as mp
 import cv2
 import threading
-import sys
+
 # =========================================================
 # CONFIGURACIÓN
 # =========================================================
@@ -12,8 +12,14 @@ import sys
 WIDTH = 1000
 HEIGHT = 700
 
-DPULGARARRIBA = 0.5
-DMANOABIERTA = 0.5
+SHOT_COOLDOWN_MS = 1000 #para que el sonido de disparo se reproduzca bien
+last_shot_time = 0
+
+
+DPULGARARRIBA = 1
+DPULGARABAJO = 0.5
+DMENIQUEARRIBA = 1.4
+DINDICEARRIBA = 1.6
 
 pygame.init()
 
@@ -27,7 +33,10 @@ clock = pygame.time.Clock()
 BACKGROUND_IMAGE = "media/Valle.jpg"
 
 background = pygame.image.load(BACKGROUND_IMAGE).convert()
-background = pygame.transform.scale(background,(WIDTH, HEIGHT))
+background = pygame.transform.scale(
+    background,
+    (WIDTH, HEIGHT)
+)
 
 font = pygame.font.Font(None, 36)
 
@@ -39,12 +48,9 @@ font = pygame.font.Font(None, 36)
 # =========================================================
 
 running = True
-
 trigger_gesture = False
 
 stop_gesture = False
-
-
 
 # Coordenadas de la mano
 hand_x = 0
@@ -63,14 +69,22 @@ targets = []
 
 # Spawn settings (campo de tiro tipo Valorant)
 MAX_TARGETS = 8          # máximas dianas simultáneas
-SPAWN_INTERVAL_MS = 2000 # intervalo en ms entre apariciones
-TARGET_LIFETIME_MS = 5000  # tiempo en ms antes de que una diana penalice si no es alcanzada
+SPAWN_INTERVAL_MS = 4000 # intervalo en ms entre apariciones
+TARGET_LIFETIME_MS = 10000  # tiempo en ms antes de que una diana penalice si no es alcanzada
 PENALTY_DAMAGE = 5        # daño aplicado si la diana expira
 
 
 def crear_diana():
-    return { #creamos la diana con sus datos y devolvemos un diccionario
-        "x": random.randint(TARGET_RADIUS,WIDTH - TARGET_RADIUS),"y": random.randint(TARGET_RADIUS + 60,HEIGHT - TARGET_RADIUS)
+    return {
+        "x": random.randint(
+            TARGET_RADIUS,
+            WIDTH - TARGET_RADIUS
+        ),
+        "y": random.randint(
+            TARGET_RADIUS + 60,
+            HEIGHT - TARGET_RADIUS
+        ),
+        "spawn_time": pygame.time.get_ticks()
     }
 
 # Sprite de diana (puedes cambiar el nombre del archivo PNG)
@@ -124,17 +138,34 @@ def dibujar_diana(x, y):
         screen.blit(target_sprite, rect)
         return
 
-    # Anillo exterior
-    pygame.draw.circle(screen, (220, 220, 220), (x, y),TARGET_RADIUS)
+    # Fallback: dibujar diana con círculos si falta el sprite
+    pygame.draw.circle(
+        screen,
+        (220, 220, 220),
+        (x, y),
+        TARGET_RADIUS
+    )
 
-    # Anillo rojo
-    pygame.draw.circle(screen, (200, 40, 40), (x, y), int(TARGET_RADIUS * 0.75))
+    pygame.draw.circle(
+        screen,
+        (200, 40, 40),
+        (x, y),
+        int(TARGET_RADIUS * 0.75)
+    )
 
-    # Anillo blanco
-    pygame.draw.circle(screen, (245, 245, 245), (x, y), int(TARGET_RADIUS * 0.50))
+    pygame.draw.circle(
+        screen,
+        (245, 245, 245),
+        (x, y),
+        int(TARGET_RADIUS * 0.50)
+    )
 
-    # Centro
-    pygame.draw.circle( screen, (220, 40, 40), (x, y), int(TARGET_RADIUS * 0.25))
+    pygame.draw.circle(
+        screen,
+        (220, 40, 40),
+        (x, y),
+        int(TARGET_RADIUS * 0.25)
+    )
 
 
 # =========================================================
@@ -143,18 +174,24 @@ def dibujar_diana(x, y):
 
 def calcular_puntuacion(x, y, diana):
 
-    distancia = math.hypot(x - diana["x"],y - diana["y"])
+    distancia = math.hypot(
+        x - diana["x"],
+        y - diana["y"]
+    )
 
     if distancia > TARGET_RADIUS:
         return 0
 
-    puntuacion = int(100 * (1 - distancia / TARGET_RADIUS))
+    puntuacion = int(
+        100 * (1 - distancia / TARGET_RADIUS)
+    )
 
     return max(10, puntuacion)
 
 # Calcular posición relativa
 def calcularDistancia(p1x, p1y, p2x, p2y):
     return math.hypot(p1x - p2x, p1y - p2y)
+
 
 # Detectar pulgar abajo
 def pulgar_abierto(hand_landmarks) -> bool:
@@ -181,6 +218,7 @@ def pulgar_abierto(hand_landmarks) -> bool:
 
     # Distancia relativa
     d_relativa = d_thumb_index / hand_size
+    #print(d_relativa)
 
     if d_relativa < DPULGARARRIBA :
         thumb_up = True
@@ -220,19 +258,18 @@ def palma_abierta(hand_landmarks) -> bool:
     d_pinky_wrist = d_pinky_wrist / hand_size
     d_index_wrist = d_index_wrist / hand_size
 
+    print("pulgar:")
     print(d_thumb_wrist)
+    print("meñique:")
     print(d_pinky_wrist)
+    print("indice:")
     print(d_index_wrist)
 
-    if d_thumb_wrist > DMANOABIERTA and d_pinky_wrist > DMANOABIERTA and d_index_wrist > DMANOABIERTA :
+    if d_thumb_wrist > DPULGARARRIBA and d_pinky_wrist > DMENIQUEARRIBA and d_index_wrist > DINDICEARRIBA :
         open_palm = True
 
     return open_palm
                
-
-   
-
-
 # =========================================================
 # HILO DE MEDIAPIPE + OPENCV
 # =========================================================
@@ -242,12 +279,20 @@ def camara_thread():
     global running
     global hand_x
     global hand_y
+
     global trigger_gesture
-    global pal
+    global stop_gesture
+
+    global last_shot_time
+     
 
     mp_drawing = mp.solutions.drawing_utils
     mp_hands = mp.solutions.hands
 
+    gesture_buffer = []
+    BUFFER_SIZE = 4
+
+    gatillo_activo = False  #controla si se levanta el gatillo para no disparar continuamente
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
     with mp_hands.Hands(
@@ -285,45 +330,91 @@ def camara_thread():
 
                 # Landmark 8 = punta del dedo índice
                 index_finger = hand.landmark[8]
-                thumb_finger = hand.landmark[4]
+
+                stop_gesture_local = palma_abierta(hand) #Comprobamos si hay stop
+
+                trigger_gesture_local =  pulgar_abierto(hand) #Comprobamos si hay disparo
 
 
+                # 2. Exclusión mutua -> un solo gesto "crudo" para este frame
+                if stop_gesture_local:
+                    gesto_raw = "stop"
+                elif trigger_gesture_local:
+                    gesto_raw = "trigger"
+                else:
+                    gesto_raw = "none"
 
-                #print("dedo indíce")
+                # 3. Meter en el buffer de debounce
+                gesture_buffer.append(gesto_raw)
+                if len(gesture_buffer) > BUFFER_SIZE:
+                    gesture_buffer.pop(0)
 
-                #Comprobamos si hay disparo
-                trigger_gesture = pulgar_abierto(hand)
-
-                #Comprobamos si hay stop
-                stop_gesture = palma_abierta(hand)
-
+                # 4. Confirmar solo si TODO el buffer coincide
+                if len(gesture_buffer) == BUFFER_SIZE and gesture_buffer.count(gesture_buffer[0]) == BUFFER_SIZE:
+                    gesto_confirmado = gesture_buffer[0]
+                else:
+                    gesto_confirmado = None  # aún no hay consenso, no cambiamos nada
+                                    
                 height, width, _ = frame.shape
 
-                # Coordenadas de  ----METER EN UNA FUNCION----
-                camera_x = int(index_finger.x * width)
+                # Coordenadas de cámara
+                camera_x = int(
+                    index_finger.x * width
+                )
 
-                camera_y = int(index_finger.y * height)
+                camera_y = int(
+                    index_finger.y * height
+                )
 
                 # Convertir a coordenadas de Pygame
-                pygame_x = int(index_finger.x * WIDTH)
+                pygame_x = int(
+                    index_finger.x * WIDTH
+                )
 
-                pygame_y = int(index_finger.y * HEIGHT)
+                pygame_y = int(
+                    index_finger.y * HEIGHT
+                )
+
+                current_time = pygame.time.get_ticks()
+
 
                 # Guardar coordenadas de forma segura
                 with lock:
                     hand_x = pygame_x
                     hand_y = pygame_y
-                    trigger_gesture = pulgar_abierto(hand)
-                    
 
+                    if gesto_confirmado == "trigger": 
+                        if not gatillo_activo and (current_time - last_shot_time >= SHOT_COOLDOWN_MS):
+                            trigger_gesture = True
+                            stop_gesture = False
+                            last_shot_time = current_time
+                            gatillo_activo = True #el gatillo está activo despues de una bala: no disparar
+                        else:
+                            trigger_gesture = False 
+                    elif gesto_confirmado == "stop":
+                        trigger_gesture = False
+                        stop_gesture = True
+                        gatillo_activo = False 
+                    elif gesto_confirmado == "none":
+                        trigger_gesture = False
+                        stop_gesture = False
+                        gatillo_activo = False #se suelte el gatillo
+                    
 
                 # Dibujar mano
                 for hand_landmarks in results.multi_hand_landmarks:
 
-                    mp_drawing.draw_landmarks(frame,hand_landmarks,mp_hands.HAND_CONNECTIONS)
+                    mp_drawing.draw_landmarks(
+                        frame,
+                        hand_landmarks,
+                        mp_hands.HAND_CONNECTIONS
+                    )
 
             # Mostrar cámara
-            cv2.imshow("Camara - MediaPipe",frame)
+            cv2.imshow(
+                "Camara - MediaPipe",
+                frame
+            )
 
             # ESC para salir
             if cv2.waitKey(1) & 0xFF == 27:
@@ -438,7 +529,9 @@ class Mira:
 # CREAR HILO DE CÁMARA
 # =========================================================
 
-thread_camera = threading.Thread(target=camara_thread)
+thread_camera = threading.Thread(
+    target=camara_thread
+)
 
 thread_camera.daemon = True
 thread_camera.start()
@@ -475,11 +568,18 @@ while running:
 
                 for diana in targets[:]:
 
-                    distancia = math.hypot(mouse_x - diana["x"],mouse_y - diana["y"])
-    
-                    if distancia <= TARGET_RADIUS :
+                    distancia = math.hypot(
+                        mouse_x - diana["x"],
+                        mouse_y - diana["y"]
+                    )
 
-                        puntos = calcular_puntuacion(mouse_x,mouse_y,diana)
+                    if distancia <= TARGET_RADIUS:
+
+                        puntos = calcular_puntuacion(
+                            mouse_x,
+                            mouse_y,
+                            diana
+                        )
 
                         puntuacion_total += puntos
 
@@ -503,29 +603,38 @@ while running:
         current_hand_y = hand_y
         current_trigger = trigger_gesture
         current_stop = stop_gesture
-
-
     # =====================================================
     # COMPROBAR SI LA MANO TOCA UNA DIANA
     # =====================================================
 
     for diana in targets[:]:
 
-        if trigger_gesture :
-            print("Disparo")
-        if stop_gesture :
-            print("Stop")
-        distancia = math.hypot(current_hand_x - diana["x"],current_hand_y - diana["y"])
+        
 
-        if distancia <= TARGET_RADIUS and trigger_gesture: #si las posiciones coinciden y ejecutar el trigger
+        distancia = math.hypot(
+            current_hand_x - diana["x"],
+            current_hand_y - diana["y"]
+        )
 
-            puntos = calcular_puntuacion(current_hand_x,current_hand_y,diana)
+        if distancia <= TARGET_RADIUS and current_trigger: #si las posiciones coinciden y ejecutar el trigger:
+            
+            puntos = calcular_puntuacion(
+                current_hand_x,
+                current_hand_y,
+                diana
+            )
 
             puntuacion_total += puntos
 
             targets.remove(diana)
 
             break
+
+        if current_stop :
+            print("Stop")
+        if current_trigger :
+            print("Disparo")
+            current_trigger = False
 
 
     # =====================================================
@@ -556,7 +665,12 @@ while running:
     # FONDO
     # =====================================================
 
-    screen.blit(background,(0, 0))
+    screen.blit(
+        background,
+        (0, 0)
+    )
+    # Dibujar la barra de vida
+    barra_jugador.dibujar(screen)
 
 
     # =====================================================
@@ -565,7 +679,10 @@ while running:
 
     for diana in targets:
 
-        dibujar_diana(diana["x"],diana["y"])
+        dibujar_diana(
+            diana["x"],
+            diana["y"]
+        )
 
     # Dibujar efectos (fade/expand) de expiración
     now = pygame.time.get_ticks()
@@ -592,18 +709,32 @@ while running:
     # PUNTUACIÓN
     # =====================================================
 
-    texto = font.render(f"Puntuación: {puntuacion_total}",True,(255, 255, 255))
+    texto = font.render(
+        f"Puntuación: {puntuacion_total}",
+        True,
+        (255, 255, 255)
+    )
 
-    screen.blit(texto,(20, 20))
+    screen.blit(
+        texto,
+        (20, 20)
+    )
 
 
     # =====================================================
     # COORDENADAS DE LA MANO
     # =====================================================
 
-    coordenadas = font.render(f"Apuntando: ({current_hand_x}, {current_hand_y})",True,(255, 255, 255))
+    coordenadas = font.render(
+        f"Apuntando: ({current_hand_x}, {current_hand_y})",
+        True,
+        (255, 255, 255)
+    )
 
-    screen.blit(coordenadas,(20, 55))
+    screen.blit(
+        coordenadas,
+        (20, 55)
+    )
 
 
     # =====================================================
@@ -615,9 +746,13 @@ while running:
     if current_hand_x != 0 and current_hand_y != 0:
         pointer_pos = (current_hand_x, current_hand_y)
 
-        pygame.draw.circle(screen,(0, 255, 0), (current_hand_x, current_hand_y),10)
+    # Dibujar la mira (usa la clase `Mira` definida arriba) en la posición calculada
+    try:
+        mira.dibujar(screen, pointer_pos)
+    except NameError:
+        pass
 
-        pygame.draw.circle(screen,(255, 255, 255),(current_hand_x, current_hand_y),15,2)
+
 
     # =====================================================
     # ACTUALIZAR PANTALLA

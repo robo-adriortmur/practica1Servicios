@@ -190,7 +190,7 @@ def camara_thread():
     global hand_x
     global hand_y
     global trigger_gesture
-    global pal
+    global stop_gesture
 
     mp_drawing = mp.solutions.drawing_utils
     mp_hands = mp.solutions.hands
@@ -238,11 +238,20 @@ def camara_thread():
 
                 #print("dedo indíce")
 
-                #Comprobamos si hay disparo
-                trigger_gesture = pulgar_abierto(hand)
+                #trigger_gesture = pulgar_abierto(hand)
 
-                #Comprobamos si hay stop
-                stop_gesture = palma_abierta(hand)
+                
+                #stop_gesture = palma_abierta(hand)
+
+                if palma_abierta(hand): #Comprobamos si hay stop
+                    stop_gesture_local = True
+                    trigger_gesture_local = False
+                elif pulgar_abierto(hand): #Comprobamos si hay disparo
+                    trigger_gesture_local = True
+                    stop_gesture_local = False
+                else: #limpiamos posibles gestos anteriores sin resolver
+                    trigger_gesture_local = False
+                    stop_gesture_local = False
 
                 height, width, _ = frame.shape
 
