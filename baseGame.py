@@ -12,6 +12,9 @@ import threading
 WIDTH = 1000
 HEIGHT = 700
 
+DPULGARARRIBA = 0.5
+DMANOABIERTA = 0.5
+
 pygame.init()
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -22,10 +25,7 @@ clock = pygame.time.Clock()
 BACKGROUND_IMAGE = "fondo.png"
 
 background = pygame.image.load(BACKGROUND_IMAGE).convert()
-background = pygame.transform.scale(
-    background,
-    (WIDTH, HEIGHT)
-)
+background = pygame.transform.scale(background,(WIDTH, HEIGHT))
 
 font = pygame.font.Font(None, 36)
 
@@ -35,6 +35,12 @@ font = pygame.font.Font(None, 36)
 # =========================================================
 
 running = True
+
+trigger_gesture = False
+
+stop_gesture = False
+
+
 
 # Coordenadas de la mano
 hand_x = 0
@@ -54,15 +60,8 @@ targets = []
 
 
 def crear_diana():
-    return {
-        "x": random.randint(
-            TARGET_RADIUS,
-            WIDTH - TARGET_RADIUS
-        ),
-        "y": random.randint(
-            TARGET_RADIUS + 60,
-            HEIGHT - TARGET_RADIUS
-        )
+    return { #creamos la diana con sus datos y devolvemos un diccionario
+        "x": random.randint(TARGET_RADIUS,WIDTH - TARGET_RADIUS),"y": random.randint(TARGET_RADIUS + 60,HEIGHT - TARGET_RADIUS)
     }
 
 
@@ -73,36 +72,16 @@ for _ in range(8):
 def dibujar_diana(x, y):
 
     # Anillo exterior
-    pygame.draw.circle(
-        screen,
-        (220, 220, 220),
-        (x, y),
-        TARGET_RADIUS
-    )
+    pygame.draw.circle(screen, (220, 220, 220), (x, y),TARGET_RADIUS)
 
     # Anillo rojo
-    pygame.draw.circle(
-        screen,
-        (200, 40, 40),
-        (x, y),
-        int(TARGET_RADIUS * 0.75)
-    )
+    pygame.draw.circle(screen, (200, 40, 40), (x, y), int(TARGET_RADIUS * 0.75))
 
     # Anillo blanco
-    pygame.draw.circle(
-        screen,
-        (245, 245, 245),
-        (x, y),
-        int(TARGET_RADIUS * 0.50)
-    )
+    pygame.draw.circle(screen, (245, 245, 245), (x, y), int(TARGET_RADIUS * 0.50))
 
     # Centro
-    pygame.draw.circle(
-        screen,
-        (220, 40, 40),
-        (x, y),
-        int(TARGET_RADIUS * 0.25)
-    )
+    pygame.draw.circle( screen, (220, 40, 40), (x, y), int(TARGET_RADIUS * 0.25))
 
 
 # =========================================================
@@ -111,29 +90,23 @@ def dibujar_diana(x, y):
 
 def calcular_puntuacion(x, y, diana):
 
-    distancia = math.hypot(
-        x - diana["x"],
-        y - diana["y"]
-    )
+    distancia = math.hypot(x - diana["x"],y - diana["y"])
 
     if distancia > TARGET_RADIUS:
         return 0
 
-    puntuacion = int(
-        100 * (1 - distancia / TARGET_RADIUS)
-    )
+    puntuacion = int(100 * (1 - distancia / TARGET_RADIUS))
 
     return max(10, puntuacion)
 
 # Calcular posición relativa
-def distancia(p1, p2):
-    return math.hypot(
-        p1.x - p2.x,
-        p1.y - p2.y
-    )
+def calcularDistancia(p1x, p1y, p2x, p2y):
+    return math.hypot(p1x - p2x, p1y - p2y)
 
 # Detectar pulgar abajo
-def pulgar_abierto(hand_landmarks):
+def pulgar_abierto(hand_landmarks) -> bool:
+
+    thumb_up = False
 
     lm = hand_landmarks.landmark
 
@@ -147,23 +120,64 @@ def pulgar_abierto(hand_landmarks):
     wrist = lm[0]
     middle_mcp = lm[9]
 
-    # Distancia pulgar - índice
-    d_thumb_index = distancia(
-        thumb_tip,
-        index_tip
-    )
+    # calculamos la posicion del pulgar
+    d_thumb_index = calcularDistancia(thumb_tip.x,thumb_tip.y,index_tip.x, index_tip.y)
 
     # Tamaño de la mano
-    hand_size = distancia(
-        wrist,
-        middle_mcp
-    )
+    hand_size = calcularDistancia(wrist.x,wrist.y,middle_mcp.x,middle_mcp.y)
 
     # Distancia relativa
     d_relativa = d_thumb_index / hand_size
 
-    # Umbral
-    return d_relativa > 0.8
+    if d_relativa < DPULGARARRIBA :
+        thumb_up = True
+
+    return thumb_up
+
+# Detectar stop
+def palma_abierta(hand_landmarks) -> bool:
+
+    open_palm = False
+
+    lm = hand_landmarks.landmark
+
+    # Punta del pulgar
+    thumb_tip = lm[4]
+
+    # Punta del índice
+    index_tip = lm[8]
+
+    # Punta del meñique
+    pinky_tip = lm[20]
+
+    # Referencia para normalizar el tamaño de la mano
+    wrist = lm[0]
+    middle_mcp = lm[9]
+
+    # calculamos la posicion del pulgar
+    d_thumb_wrist = calcularDistancia(thumb_tip.x,thumb_tip.y,wrist.x, wrist.y)
+    d_pinky_wrist = calcularDistancia(pinky_tip.x,pinky_tip.y, wrist.x, wrist.y)
+    d_index_wrist = calcularDistancia(index_tip.x,index_tip.y, wrist.x, wrist.y)
+
+    # Tamaño de la mano
+    hand_size = calcularDistancia(wrist.x,wrist.y,middle_mcp.x,middle_mcp.y)
+
+    # Distancia relativa
+    d_thumb_wrist = d_thumb_wrist / hand_size
+    d_pinky_wrist = d_pinky_wrist / hand_size
+    d_index_wrist = d_index_wrist / hand_size
+
+    print(d_thumb_wrist)
+    print(d_pinky_wrist)
+    print(d_index_wrist)
+
+    if d_thumb_wrist > DMANOABIERTA and d_pinky_wrist > DMANOABIERTA and d_index_wrist > DMANOABIERTA :
+        open_palm = True
+
+    return open_palm
+               
+
+   
 
 
 # =========================================================
@@ -175,6 +189,8 @@ def camara_thread():
     global running
     global hand_x
     global hand_y
+    global trigger_gesture
+    global pal
 
     mp_drawing = mp.solutions.drawing_utils
     mp_hands = mp.solutions.hands
@@ -200,10 +216,7 @@ def camara_thread():
             frame = cv2.flip(frame, 1)
 
             # RGB para MediaPipe
-            frame_rgb = cv2.cvtColor(
-                frame,
-                cv2.COLOR_BGR2RGB
-            )
+            frame_rgb = cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
 
             # Detectar manos
             results = hands.process(frame_rgb)
@@ -225,52 +238,39 @@ def camara_thread():
 
                 #print("dedo indíce")
 
-                #print(index_finger)
+                #Comprobamos si hay disparo
+                trigger_gesture = pulgar_abierto(hand)
 
-                print("dedo pulgar x ")
-                print(thumb_finger)
-
-
+                #Comprobamos si hay stop
+                stop_gesture = palma_abierta(hand)
 
                 height, width, _ = frame.shape
 
-                # Coordenadas de cámara
-                camera_x = int(
-                    index_finger.x * width
-                )
+                # Coordenadas de  ----METER EN UNA FUNCION----
+                camera_x = int(index_finger.x * width)
 
-                camera_y = int(
-                    index_finger.y * height
-                )
+                camera_y = int(index_finger.y * height)
 
                 # Convertir a coordenadas de Pygame
-                pygame_x = int(
-                    index_finger.x * WIDTH
-                )
+                pygame_x = int(index_finger.x * WIDTH)
 
-                pygame_y = int(
-                    index_finger.y * HEIGHT
-                )
+                pygame_y = int(index_finger.y * HEIGHT)
 
                 # Guardar coordenadas de forma segura
                 with lock:
                     hand_x = pygame_x
                     hand_y = pygame_y
+                    trigger_gesture = pulgar_abierto(hand)
+                    
+
 
                 # Dibujar mano
                 for hand_landmarks in results.multi_hand_landmarks:
 
-                    mp_drawing.draw_landmarks(
-                        frame,
-                        hand_landmarks,
-                        mp_hands.HAND_CONNECTIONS
-                    )
+                    mp_drawing.draw_landmarks(frame,hand_landmarks,mp_hands.HAND_CONNECTIONS)
 
             # Mostrar cámara
-            cv2.imshow(
-                "Camara - MediaPipe",
-                frame
-            )
+            cv2.imshow("Camara - MediaPipe",frame)
 
             # ESC para salir
             if cv2.waitKey(1) & 0xFF == 27:
@@ -285,9 +285,7 @@ def camara_thread():
 # CREAR HILO DE CÁMARA
 # =========================================================
 
-thread_camera = threading.Thread(
-    target=camara_thread
-)
+thread_camera = threading.Thread(target=camara_thread)
 
 thread_camera.daemon = True
 thread_camera.start()
@@ -319,18 +317,11 @@ while running:
 
                 for diana in targets[:]:
 
-                    distancia = math.hypot(
-                        mouse_x - diana["x"],
-                        mouse_y - diana["y"]
-                    )
+                    distancia = math.hypot(mouse_x - diana["x"],mouse_y - diana["y"])
+    
+                    if distancia <= TARGET_RADIUS :
 
-                    if distancia <= TARGET_RADIUS:
-
-                        puntos = calcular_puntuacion(
-                            mouse_x,
-                            mouse_y,
-                            diana
-                        )
+                        puntos = calcular_puntuacion(mouse_x,mouse_y,diana)
 
                         puntuacion_total += puntos
 
@@ -346,6 +337,8 @@ while running:
     with lock:
         current_hand_x = hand_x
         current_hand_y = hand_y
+        current_trigger = trigger_gesture
+        current_stop = stop_gesture
 
 
     # =====================================================
@@ -354,18 +347,15 @@ while running:
 
     for diana in targets[:]:
 
-        distancia = math.hypot(
-            current_hand_x - diana["x"],
-            current_hand_y - diana["y"]
-        )
+        if trigger_gesture :
+            print("Disparo")
+        if stop_gesture :
+            print("Stop")
+        distancia = math.hypot(current_hand_x - diana["x"],current_hand_y - diana["y"])
 
-        if distancia <= TARGET_RADIUS:
+        if distancia <= TARGET_RADIUS and trigger_gesture: #si las posiciones coinciden y ejecutar el trigger
 
-            puntos = calcular_puntuacion(
-                current_hand_x,
-                current_hand_y,
-                diana
-            )
+            puntos = calcular_puntuacion(current_hand_x,current_hand_y,diana)
 
             puntuacion_total += puntos
 
@@ -378,10 +368,7 @@ while running:
     # FONDO
     # =====================================================
 
-    screen.blit(
-        background,
-        (0, 0)
-    )
+    screen.blit(background,(0, 0))
 
 
     # =====================================================
@@ -390,42 +377,25 @@ while running:
 
     for diana in targets:
 
-        dibujar_diana(
-            diana["x"],
-            diana["y"]
-        )
+        dibujar_diana(diana["x"],diana["y"])
 
 
     # =====================================================
     # PUNTUACIÓN
     # =====================================================
 
-    texto = font.render(
-        f"Puntuación: {puntuacion_total}",
-        True,
-        (255, 255, 255)
-    )
+    texto = font.render(f"Puntuación: {puntuacion_total}",True,(255, 255, 255))
 
-    screen.blit(
-        texto,
-        (20, 20)
-    )
+    screen.blit(texto,(20, 20))
 
 
     # =====================================================
     # COORDENADAS DE LA MANO
     # =====================================================
 
-    coordenadas = font.render(
-        f"Apuntando: ({current_hand_x}, {current_hand_y})",
-        True,
-        (255, 255, 255)
-    )
+    coordenadas = font.render(f"Apuntando: ({current_hand_x}, {current_hand_y})",True,(255, 255, 255))
 
-    screen.blit(
-        coordenadas,
-        (20, 55)
-    )
+    screen.blit(coordenadas,(20, 55))
 
 
     # =====================================================
@@ -434,21 +404,9 @@ while running:
 
     if current_hand_x != 0 and current_hand_y != 0:
 
-        pygame.draw.circle(
-            screen,
-            (0, 255, 0),
-            (current_hand_x, current_hand_y),
-            10
-        )
+        pygame.draw.circle(screen,(0, 255, 0), (current_hand_x, current_hand_y),10)
 
-        pygame.draw.circle(
-            screen,
-            (255, 255, 255),
-            (current_hand_x, current_hand_y),
-            15,
-            2
-        )
-
+        pygame.draw.circle(screen,(255, 255, 255),(current_hand_x, current_hand_y),15,2)
 
     # =====================================================
     # ACTUALIZAR PANTALLA
