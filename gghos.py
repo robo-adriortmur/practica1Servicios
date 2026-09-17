@@ -4,7 +4,7 @@ import math
 import mediapipe as mp
 import cv2
 import threading
-import sys
+
 # =========================================================
 # CONFIGURACIÓN
 # =========================================================
@@ -28,8 +28,6 @@ background = pygame.image.load(BACKGROUND_IMAGE).convert()
 background = pygame.transform.scale(background,(WIDTH, HEIGHT))
 
 font = pygame.font.Font(None, 36)
-
-
 
 
 # =========================================================
@@ -57,13 +55,8 @@ lock = threading.Lock()
 # =========================================================
 
 TARGET_RADIUS = 40
-targets = []
 
-# Spawn settings (campo de tiro tipo Valorant)
-MAX_TARGETS = 8          # máximas dianas simultáneas
-SPAWN_INTERVAL_MS = 2000 # intervalo en ms entre apariciones
-TARGET_LIFETIME_MS = 5000  # tiempo en ms antes de que una diana penalice si no es alcanzada
-PENALTY_DAMAGE = 5        # daño aplicado si la diana expira
+targets = []
 
 
 def crear_diana():
@@ -71,45 +64,12 @@ def crear_diana():
         "x": random.randint(TARGET_RADIUS,WIDTH - TARGET_RADIUS),"y": random.randint(TARGET_RADIUS + 60,HEIGHT - TARGET_RADIUS)
     }
 
-# Sprite de diana (puedes cambiar el nombre del archivo PNG)
-TARGET_IMAGE = "media/Soldier.png"
-try:
-    target_sprite = pygame.image.load(TARGET_IMAGE).convert_alpha()
-    # Escalar al tamaño del radio objetivo (diámetro)
-    target_sprite = pygame.transform.scale(target_sprite,(TARGET_RADIUS * 2, TARGET_RADIUS * 2))
-    print(f"Sprite de diana cargado: {TARGET_IMAGE}")
-except Exception as e:
-    print(f"No se pudo cargar '{TARGET_IMAGE}': {e}. Usando diana dibujada por código.")
-    target_sprite = None
 
-# Efectos y sonido al expirar dianas
-EFFECT_DURATION_MS = 600
-effects = []  # lista de efectos activos: dicts con x,y,start_time
-EXPIRE_SOUND_FILE = "media/expire.mp3"
-expire_sound = None
-try:
-    pygame.mixer.init()
-    expire_sound = pygame.mixer.Sound(EXPIRE_SOUND_FILE)
-    print(f"Sonido de expiración cargado: {EXPIRE_SOUND_FILE}")
-except Exception as e:
-    expire_sound = None
-    print(f"No se pudo cargar sonido '{EXPIRE_SOUND_FILE}': {e}. Continuando sin sonido.")
-
-# Inicialmente dejamos unas pocas dianas para empezar
-for _ in range(2):
+for _ in range(8):
     targets.append(crear_diana())
-
-# Evento de spawn periódico
-SPAWN_EVENT = pygame.USEREVENT + 1
-pygame.time.set_timer(SPAWN_EVENT, SPAWN_INTERVAL_MS)
 
 
 def dibujar_diana(x, y):
-    # Si hay un sprite cargado, lo usamos (centrado en x,y)
-    if target_sprite:
-        rect = target_sprite.get_rect(center=(x, y))
-        screen.blit(target_sprite, rect)
-        return
 
     # Anillo exterior
     pygame.draw.circle(screen, (220, 220, 220), (x, y),TARGET_RADIUS)
@@ -235,7 +195,7 @@ def camara_thread():
     mp_drawing = mp.solutions.drawing_utils
     mp_hands = mp.solutions.hands
 
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    cap = cv2.VideoCapture(0)
 
     with mp_hands.Hands(
         static_image_mode=False,
@@ -320,60 +280,6 @@ def camara_thread():
     cap.release()
     cv2.destroyAllWindows()
 
-# ==========================================
-# 1. CLASE BARRA DE VIDA
-# ==========================================
-class BarraVida:
-    def __init__(self, x, y, ancho, alto, vida_maxima):
-        self.x = x
-        self.y = y
-        self.ancho = ancho
-        self.alto = alto
-        self.vida_maxima = vida_maxima
-        self.vida_actual = vida_maxima
-        self.vida_animada = vida_maxima  # Controla la barra visual que baja suavemente
-
-    def recibir_dano(self, cantidad):
-        self.vida_actual = max(self.vida_actual - cantidad, 0)
-
-    def curar(self, cantidad):
-        self.vida_actual = min(self.vida_actual + cantidad, self.vida_maxima)
-
-    def dibujar(self, superficie):
-        # 1. Efecto de interpolación: acerca la barra animada a la real suavemente
-        self.vida_animada += (self.vida_actual - self.vida_animada) * 0.1
-
-        # 2. Calcular los anchos proporcionales
-        ancho_actual = (self.vida_actual / self.vida_maxima) * self.ancho
-        ancho_animado = (self.vida_animada / self.vida_maxima) * self.ancho
-
-        # 3. Definir los rectángulos
-        rect_fondo = pygame.Rect(self.x, self.y, self.ancho, self.alto)
-        rect_animado = pygame.Rect(self.x, self.y, ancho_animado, self.alto)
-        rect_actual = pygame.Rect(self.x, self.y, ancho_actual, self.alto)
-
-        # 4. Paleta de colores más moderna (código RGB)
-        ratio = self.vida_actual / self.vida_maxima
-        color_vida = (46, 204, 113)      # Verde esmeralda
-        if ratio <= 0.5:
-            color_vida = (241, 196, 15)  # Amarillo mostaza
-        if ratio <= 0.2:
-            color_vida = (231, 76, 60)   # Rojo carmesí
-
-        # 5. Dibujar en capas usando border_radius para las esquinas redondeadas
-        
-        # Capa 1: Fondo oscuro (hueco vacío)
-        pygame.draw.rect(superficie, (40, 40, 40), rect_fondo, border_radius=6)
-        
-        # Capa 2: Barra de daño residual (rojo claro/rosado que se queda atrás)
-        pygame.draw.rect(superficie, (255, 100, 100), rect_animado, border_radius=6)
-        
-        # Capa 3: Barra de vida real que cambia de color
-        pygame.draw.rect(superficie, color_vida, rect_actual, border_radius=6)
-        
-        # Capa 4: Borde exterior (grosor de 2 píxeles)
-        pygame.draw.rect(superficie, (200, 200, 200), rect_fondo, width=2, border_radius=6)
-
 
 # =========================================================
 # CREAR HILO DE CÁMARA
@@ -388,11 +294,6 @@ thread_camera.start()
 # =========================================================
 # BUCLE PRINCIPAL DE PYGAME
 # =========================================================
-
-# Crear una instancia de la barra de vida para el jugador
-# Posición (WIDTH/2, HEIGHT-100), 200px de ancho, 25px de alto, 100 de vida máxima
-
-barra_jugador = BarraVida((WIDTH/2)-150, HEIGHT-50, 300, 25, 100)
 
 puntuacion_total = 0
 
@@ -427,12 +328,6 @@ while running:
                         targets.remove(diana)
 
                         break
-        # Evento periódico para generar nuevas dianas
-        elif event.type == SPAWN_EVENT:
-            if len(targets) < MAX_TARGETS:
-                targets.append(crear_diana())
-
-
 
 
     # =====================================================
@@ -470,30 +365,6 @@ while running:
 
 
     # =====================================================
-    # COMPROBAR Dianas expirada -> penalizar vida
-    # =====================================================
-    current_time = pygame.time.get_ticks()
-    for diana in targets[:]:
-        spawn = diana.get("spawn_time", 0)
-        if current_time - spawn >= TARGET_LIFETIME_MS:
-            # Añadir efecto visual y reproducir sonido
-            effects.append({
-                "x": diana["x"],
-                "y": diana["y"],
-                "start_time": current_time
-            })
-            if expire_sound:
-                try:
-                    expire_sound.play()
-                except Exception:
-                    pass
-
-            print(f"Diana en ({diana['x']}, {diana['y']}) ha expirado. -{PENALTY_DAMAGE} vida")
-            barra_jugador.recibir_dano(PENALTY_DAMAGE)
-            targets.remove(diana)
-
-
-    # =====================================================
     # FONDO
     # =====================================================
 
@@ -507,26 +378,6 @@ while running:
     for diana in targets:
 
         dibujar_diana(diana["x"],diana["y"])
-
-    # Dibujar efectos (fade/expand) de expiración
-    now = pygame.time.get_ticks()
-    for eff in effects[:]:
-        elapsed = now - eff["start_time"]
-        if elapsed >= EFFECT_DURATION_MS:
-            effects.remove(eff)
-            continue
-
-        t = elapsed / EFFECT_DURATION_MS
-        max_radius = TARGET_RADIUS * 2.5
-        radius = int(max_radius * t) + 5
-        alpha = int(255 * (1 - t))
-
-        diameter = radius * 2
-        surf = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
-        color = (255, 100, 100, alpha)
-        pygame.draw.circle(surf, color, (radius, radius), radius)
-
-        screen.blit(surf, (eff["x"] - radius, eff["y"] - radius))
 
 
     # =====================================================
