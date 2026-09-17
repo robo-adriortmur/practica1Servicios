@@ -16,10 +16,12 @@ pygame.init()
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Dianas")
+# Ocultar el cursor del sistema: usaremos la mira/puntero dibujado por el juego
+pygame.mouse.set_visible(False)
 
 clock = pygame.time.Clock()
 
-BACKGROUND_IMAGE = "fondo.png"
+BACKGROUND_IMAGE = "media/Valle.jpg"
 
 background = pygame.image.load(BACKGROUND_IMAGE).convert()
 background = pygame.transform.scale(
@@ -87,7 +89,7 @@ except Exception as e:
 # Efectos y sonido al expirar dianas
 EFFECT_DURATION_MS = 600
 effects = []  # lista de efectos activos: dicts con x,y,start_time
-EXPIRE_SOUND_FILE = "media/expire.mp3"
+EXPIRE_SOUND_FILE = "media/expire.wav"
 expire_sound = None
 try:
     pygame.mixer.init()
@@ -96,6 +98,17 @@ try:
 except Exception as e:
     expire_sound = None
     print(f"No se pudo cargar sonido '{EXPIRE_SOUND_FILE}': {e}. Continuando sin sonido.")
+
+# Sprite del puntero de la mano (usa media/hand.png por defecto)
+HAND_IMAGE = "media/crosshair.png"
+HAND_SIZE = (40, 40)
+try:
+    hand_sprite = pygame.image.load(HAND_IMAGE).convert_alpha()
+    hand_sprite = pygame.transform.scale(hand_sprite, HAND_SIZE)
+    print(f"Sprite de mano cargado: {HAND_IMAGE}")
+except Exception as e:
+    hand_sprite = None
+    print(f"No se pudo cargar '{HAND_IMAGE}': {e}. Usando puntero por código.")
 
 # Inicialmente dejamos unas pocas dianas para empezar
 for _ in range(2):
@@ -198,10 +211,7 @@ def camara_thread():
             frame = cv2.flip(frame, 1)
 
             # RGB para MediaPipe
-            frame_rgb = cv2.cvtColor(
-                frame,
-                cv2.COLOR_BGR2RGB
-            )
+            frame_rgb = cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
 
             # Detectar manos
             results = hands.process(frame_rgb)
@@ -320,7 +330,53 @@ class BarraVida:
         # Capa 4: Borde exterior (grosor de 2 píxeles)
         pygame.draw.rect(superficie, (200, 200, 200), rect_fondo, width=2, border_radius=6)
 
+# ==========================================
+# CLASE MIRA ENCAPSULADA
+# ==========================================
+class Mira:
+    def __init__(self, ruta_imagen, tamaño=(50, 50)):
+        # Procesar evento para la mira (clase Mira)
+        try:
+            mira.procesar_evento(event)
+        except NameError:
+            pass
+        # 1. Cargar la imagen blanca
+        try:
+            self.blanca = pygame.image.load(ruta_imagen).convert_alpha()
+            self.blanca = pygame.transform.scale(self.blanca, tamaño)
+        except FileNotFoundError:
+            # Respaldo si no encuentra el archivo
+            self.blanca = pygame.Surface(tamaño, pygame.SRCALPHA)
+            centro = (tamaño[0]//2, tamaño[1]//2)
+            pygame.draw.circle(self.blanca, (255, 255, 255), centro, 20, 2)
+            pygame.draw.line(self.blanca, (255, 255, 255), (centro[0], 0), (centro[0], tamaño[1]), 2)
+            pygame.draw.line(self.blanca, (255, 255, 255), (0, centro[1]), (tamaño[0], centro[1]), 2)
 
+        # 2. Generar automáticamente la versión roja
+        self.roja = self.blanca.copy()
+        self.roja.fill((255, 0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        
+        # 3. Estado de la mira
+        self.disparando = False
+
+    def procesar_evento(self, evento):
+        # Actualizar el estado si se hace clic
+        if evento.type == pygame.MOUSEBUTTONDOWN and evento.button == 1:
+            self.disparando = True
+        elif evento.type == pygame.MOUSEBUTTONUP and evento.button == 1:
+            self.disparando = False
+
+    def dibujar(self, superficie, pos=None):
+        # Elegir la imagen según el estado
+        imagen_actual = self.roja if self.disparando else self.blanca
+
+        # Si se pasa `pos`, la usamos (por ejemplo la posición de la mano),
+        # si no, usamos la posición del ratón.
+        if pos is None:
+            pos = pygame.mouse.get_pos()
+
+        rect_mira = imagen_actual.get_rect(center=pos)
+        superficie.blit(imagen_actual, rect_mira)
 # =========================================================
 # CREAR HILO DE CÁMARA
 # =========================================================
@@ -341,7 +397,7 @@ thread_camera.start()
 # Posición (WIDTH/2, HEIGHT-100), 200px de ancho, 25px de alto, 100 de vida máxima
 
 barra_jugador = BarraVida((WIDTH/2)-150, HEIGHT-50, 300, 25, 100)
-
+mira = Mira("media/crosshair.png", tamaño=(40, 40))
 puntuacion_total = 0
 
 while running:
@@ -527,22 +583,17 @@ while running:
     # DIBUJAR PUNTERO DE LA MANO
     # =====================================================
 
+    # Determinar posición del puntero: preferimos la mano si está disponible
+    pointer_pos = None
     if current_hand_x != 0 and current_hand_y != 0:
+        pointer_pos = (current_hand_x, current_hand_y)
 
-        pygame.draw.circle(
-            screen,
-            (0, 255, 0),
-            (current_hand_x, current_hand_y),
-            10
-        )
+    # Dibujar la mira (usa la clase `Mira` definida arriba) en la posición calculada
+    try:
+        mira.dibujar(screen, pointer_pos)
+    except NameError:
+        pass
 
-        pygame.draw.circle(
-            screen,
-            (255, 255, 255),
-            (current_hand_x, current_hand_y),
-            15,
-            2
-        )
 
 
     # =====================================================
