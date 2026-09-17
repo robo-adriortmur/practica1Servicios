@@ -4,7 +4,7 @@ import math
 import mediapipe as mp
 import cv2
 import threading
-
+import sys
 # =========================================================
 # CONFIGURACIÓN
 # =========================================================
@@ -228,6 +228,60 @@ def camara_thread():
     cap.release()
     cv2.destroyAllWindows()
 
+# ==========================================
+# 1. CLASE BARRA DE VIDA
+# ==========================================
+class BarraVida:
+    def __init__(self, x, y, ancho, alto, vida_maxima):
+        self.x = x
+        self.y = y
+        self.ancho = ancho
+        self.alto = alto
+        self.vida_maxima = vida_maxima
+        self.vida_actual = vida_maxima
+        self.vida_animada = vida_maxima  # Controla la barra visual que baja suavemente
+
+    def recibir_dano(self, cantidad):
+        self.vida_actual = max(self.vida_actual - cantidad, 0)
+
+    def curar(self, cantidad):
+        self.vida_actual = min(self.vida_actual + cantidad, self.vida_maxima)
+
+    def dibujar(self, superficie):
+        # 1. Efecto de interpolación: acerca la barra animada a la real suavemente
+        self.vida_animada += (self.vida_actual - self.vida_animada) * 0.1
+
+        # 2. Calcular los anchos proporcionales
+        ancho_actual = (self.vida_actual / self.vida_maxima) * self.ancho
+        ancho_animado = (self.vida_animada / self.vida_maxima) * self.ancho
+
+        # 3. Definir los rectángulos
+        rect_fondo = pygame.Rect(self.x, self.y, self.ancho, self.alto)
+        rect_animado = pygame.Rect(self.x, self.y, ancho_animado, self.alto)
+        rect_actual = pygame.Rect(self.x, self.y, ancho_actual, self.alto)
+
+        # 4. Paleta de colores más moderna (código RGB)
+        ratio = self.vida_actual / self.vida_maxima
+        color_vida = (46, 204, 113)      # Verde esmeralda
+        if ratio <= 0.5:
+            color_vida = (241, 196, 15)  # Amarillo mostaza
+        if ratio <= 0.2:
+            color_vida = (231, 76, 60)   # Rojo carmesí
+
+        # 5. Dibujar en capas usando border_radius para las esquinas redondeadas
+        
+        # Capa 1: Fondo oscuro (hueco vacío)
+        pygame.draw.rect(superficie, (40, 40, 40), rect_fondo, border_radius=6)
+        
+        # Capa 2: Barra de daño residual (rojo claro/rosado que se queda atrás)
+        pygame.draw.rect(superficie, (255, 100, 100), rect_animado, border_radius=6)
+        
+        # Capa 3: Barra de vida real que cambia de color
+        pygame.draw.rect(superficie, color_vida, rect_actual, border_radius=6)
+        
+        # Capa 4: Borde exterior (grosor de 2 píxeles)
+        pygame.draw.rect(superficie, (200, 200, 200), rect_fondo, width=2, border_radius=6)
+
 
 # =========================================================
 # CREAR HILO DE CÁMARA
@@ -244,6 +298,10 @@ thread_camera.start()
 # =========================================================
 # BUCLE PRINCIPAL DE PYGAME
 # =========================================================
+
+# Crear una instancia de la barra de vida para el jugador
+# Posición (10, 10), 200px de ancho, 25px de alto, 100 de vida máxima
+barra_jugador = BarraVida(10, 10, 200, 25, 100)
 
 puntuacion_total = 0
 
@@ -286,6 +344,9 @@ while running:
 
                         break
 
+     # Dibujar la barra de vida
+    barra_jugador.dibujar(screen)
+
 
     # =====================================================
     # OBTENER POSICIÓN DE LA MANO
@@ -294,8 +355,6 @@ while running:
     with lock:
         current_hand_x = hand_x
         current_hand_y = hand_y
-
-
     # =====================================================
     # COMPROBAR SI LA MANO TOCA UNA DIANA
     # =====================================================
