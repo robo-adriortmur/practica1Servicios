@@ -30,6 +30,8 @@ background = pygame.transform.scale(
 font = pygame.font.Font(None, 36)
 
 
+
+
 # =========================================================
 # VARIABLES COMPARTIDAS ENTRE HILOS
 # =========================================================
@@ -49,8 +51,13 @@ lock = threading.Lock()
 # =========================================================
 
 TARGET_RADIUS = 40
-
 targets = []
+
+# Spawn settings (campo de tiro tipo Valorant)
+MAX_TARGETS = 8          # máximas dianas simultáneas
+SPAWN_INTERVAL_MS = 2000 # intervalo en ms entre apariciones
+TARGET_LIFETIME_MS = 5000  # tiempo en ms antes de que una diana penalice si no es alcanzada
+PENALTY_DAMAGE = 5        # daño aplicado si la diana expira
 
 
 def crear_diana():
@@ -62,17 +69,51 @@ def crear_diana():
         "y": random.randint(
             TARGET_RADIUS + 60,
             HEIGHT - TARGET_RADIUS
-        )
+        ),
+        "spawn_time": pygame.time.get_ticks()
     }
 
+# Sprite de diana (puedes cambiar el nombre del archivo PNG)
+TARGET_IMAGE = "media/Soldier.png"
+try:
+    target_sprite = pygame.image.load(TARGET_IMAGE).convert_alpha()
+    # Escalar al tamaño del radio objetivo (diámetro)
+    target_sprite = pygame.transform.scale(target_sprite,(TARGET_RADIUS * 2, TARGET_RADIUS * 2))
+    print(f"Sprite de diana cargado: {TARGET_IMAGE}")
+except Exception as e:
+    print(f"No se pudo cargar '{TARGET_IMAGE}': {e}. Usando diana dibujada por código.")
+    target_sprite = None
 
-for _ in range(8):
+# Efectos y sonido al expirar dianas
+EFFECT_DURATION_MS = 600
+effects = []  # lista de efectos activos: dicts con x,y,start_time
+EXPIRE_SOUND_FILE = "media/expire.mp3"
+expire_sound = None
+try:
+    pygame.mixer.init()
+    expire_sound = pygame.mixer.Sound(EXPIRE_SOUND_FILE)
+    print(f"Sonido de expiración cargado: {EXPIRE_SOUND_FILE}")
+except Exception as e:
+    expire_sound = None
+    print(f"No se pudo cargar sonido '{EXPIRE_SOUND_FILE}': {e}. Continuando sin sonido.")
+
+# Inicialmente dejamos unas pocas dianas para empezar
+for _ in range(2):
     targets.append(crear_diana())
+
+# Evento de spawn periódico
+SPAWN_EVENT = pygame.USEREVENT + 1
+pygame.time.set_timer(SPAWN_EVENT, SPAWN_INTERVAL_MS)
 
 
 def dibujar_diana(x, y):
+    # Si hay un sprite cargado, lo usamos (centrado en x,y)
+    if target_sprite:
+        rect = target_sprite.get_rect(center=(x, y))
+        screen.blit(target_sprite, rect)
+        return
 
-    # Anillo exterior
+    # Fallback: dibujar diana con círculos si falta el sprite
     pygame.draw.circle(
         screen,
         (220, 220, 220),
@@ -80,7 +121,6 @@ def dibujar_diana(x, y):
         TARGET_RADIUS
     )
 
-    # Anillo rojo
     pygame.draw.circle(
         screen,
         (200, 40, 40),
@@ -88,7 +128,6 @@ def dibujar_diana(x, y):
         int(TARGET_RADIUS * 0.75)
     )
 
-    # Anillo blanco
     pygame.draw.circle(
         screen,
         (245, 245, 245),
@@ -96,7 +135,6 @@ def dibujar_diana(x, y):
         int(TARGET_RADIUS * 0.50)
     )
 
-    # Centro
     pygame.draw.circle(
         screen,
         (220, 40, 40),
@@ -139,7 +177,7 @@ def camara_thread():
     mp_drawing = mp.solutions.drawing_utils
     mp_hands = mp.solutions.hands
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
     with mp_hands.Hands(
         static_image_mode=False,
@@ -344,6 +382,10 @@ while running:
                         targets.remove(diana)
 
                         break
+        # Evento periódico para generar nuevas dianas
+        elif event.type == SPAWN_EVENT:
+            if len(targets) < MAX_TARGETS:
+                targets.append(crear_diana())
 
 
 
@@ -382,6 +424,30 @@ while running:
 
 
     # =====================================================
+    # COMPROBAR Dianas expirada -> penalizar vida
+    # =====================================================
+    current_time = pygame.time.get_ticks()
+    for diana in targets[:]:
+        spawn = diana.get("spawn_time", 0)
+        if current_time - spawn >= TARGET_LIFETIME_MS:
+            # Añadir efecto visual y reproducir sonido
+            effects.append({
+                "x": diana["x"],
+                "y": diana["y"],
+                "start_time": current_time
+            })
+            if expire_sound:
+                try:
+                    expire_sound.play()
+                except Exception:
+                    pass
+
+            print(f"Diana en ({diana['x']}, {diana['y']}) ha expirado. -{PENALTY_DAMAGE} vida")
+            barra_jugador.recibir_dano(PENALTY_DAMAGE)
+            targets.remove(diana)
+
+
+    # =====================================================
     # FONDO
     # =====================================================
 
@@ -403,6 +469,26 @@ while running:
             diana["x"],
             diana["y"]
         )
+
+    # Dibujar efectos (fade/expand) de expiración
+    now = pygame.time.get_ticks()
+    for eff in effects[:]:
+        elapsed = now - eff["start_time"]
+        if elapsed >= EFFECT_DURATION_MS:
+            effects.remove(eff)
+            continue
+
+        t = elapsed / EFFECT_DURATION_MS
+        max_radius = TARGET_RADIUS * 2.5
+        radius = int(max_radius * t) + 5
+        alpha = int(255 * (1 - t))
+
+        diameter = radius * 2
+        surf = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
+        color = (255, 100, 100, alpha)
+        pygame.draw.circle(surf, color, (radius, radius), radius)
+
+        screen.blit(surf, (eff["x"] - radius, eff["y"] - radius))
 
 
     # =====================================================
