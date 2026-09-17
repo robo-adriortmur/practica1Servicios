@@ -300,8 +300,9 @@ thread_camera.start()
 # =========================================================
 
 # Crear una instancia de la barra de vida para el jugador
-# Posición (10, 10), 200px de ancho, 25px de alto, 100 de vida máxima
-barra_jugador = BarraVida(10, 10, 200, 25, 100)
+# Posición (WIDTH/2, HEIGHT-100), 200px de ancho, 25px de alto, 100 de vida máxima
+
+barra_jugador = BarraVida((WIDTH/2)-150, HEIGHT-50, 300, 25, 100)
 
 puntuacion_total = 0
 
@@ -344,8 +345,7 @@ while running:
 
                         break
 
-     # Dibujar la barra de vida
-    barra_jugador.dibujar(screen)
+
 
 
     # =====================================================
@@ -389,6 +389,8 @@ while running:
         background,
         (0, 0)
     )
+    # Dibujar la barra de vida
+    barra_jugador.dibujar(screen)
 
 
     # =====================================================
