@@ -20,6 +20,8 @@ DPULGARARRIBA = 1
 DPULGARABAJO = 0.5
 DMENIQUEARRIBA = 1.4
 DINDICEARRIBA = 1.6
+DMEDIOARRIBA = 1.5
+DANULARARRIBA = 1.5
 
 pygame.init()
 
@@ -176,27 +178,61 @@ def pulgar_abierto(hand_landmarks) -> bool:
     return thumb_up
 
 
+
+# Detectar stop
 def palma_abierta(hand_landmarks) -> bool:
+
     open_palm = False
+
     lm = hand_landmarks.landmark
+
+    # Punta del pulgar
     thumb_tip = lm[4]
+
+    # Punta del índice
     index_tip = lm[8]
+
+    # Punta del meñique
     pinky_tip = lm[20]
+
+    # Punta del corazón
+    middle_tip = lm[12]
+
+    # Punta del anular
+    ring_tip = lm[16]
+
+    # Referencia para normalizar el tamaño de la mano
     wrist = lm[0]
     middle_mcp = lm[9]
 
+    # calculamos la posicion del pulgar
     d_thumb_wrist = calcularDistancia(thumb_tip.x,thumb_tip.y,wrist.x, wrist.y)
     d_pinky_wrist = calcularDistancia(pinky_tip.x,pinky_tip.y, wrist.x, wrist.y)
     d_index_wrist = calcularDistancia(index_tip.x,index_tip.y, wrist.x, wrist.y)
-
+    d_middle_wrist = calcularDistancia(middle_tip.x, middle_tip.y, wrist.x, wrist.y)
+    d_ring_wrist = calcularDistancia(ring_tip.x, ring_tip.y, wrist.x, wrist.y)
+    
+    # Tamaño de la mano
     hand_size = calcularDistancia(wrist.x,wrist.y,middle_mcp.x,middle_mcp.y)
 
+        # Distancia relativa
     d_thumb_wrist = d_thumb_wrist / hand_size
     d_pinky_wrist = d_pinky_wrist / hand_size
     d_index_wrist = d_index_wrist / hand_size
+    d_middle_wrist = d_middle_wrist / hand_size
+    d_ring_wrist = d_ring_wrist / hand_size
 
-    if d_thumb_wrist > DPULGARARRIBA and d_pinky_wrist > DMENIQUEARRIBA and d_index_wrist > DINDICEARRIBA :
+
+    #print("pulgar:")
+    #print(d_thumb_wrist)
+    #print("meñique:")
+    #print(d_pinky_wrist)
+    #print("indice:")
+    #print(d_index_wrist)
+
+    if d_thumb_wrist > DPULGARARRIBA and d_pinky_wrist > DMENIQUEARRIBA and d_index_wrist > DINDICEARRIBA and d_ring_wrist > DANULARARRIBA and d_middle_wrist > DMEDIOARRIBA  :
         open_palm = True
+
     return open_palm
                
 # =========================================================
