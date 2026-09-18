@@ -4,451 +4,108 @@ import math
 import mediapipe as mp
 import cv2
 import threading
+import time
 
 # =========================================================
-# CONFIGURACIÓN
+# CONFIGURACIÓN DEL JUEGO
 # =========================================================
-
 WIDTH = 1000
 HEIGHT = 700
 
-SHOT_COOLDOWN_MS = 00 #para que el sonido de disparo se reproduzca bien
-last_shot_time = 0
+TARGET_RADIUS = 40
+MAX_TARGETS = 8          
+SPAWN_INTERVAL_MS = 4000   
+TARGET_LIFETIME_MS = 10000 
+PENALTY_DAMAGE = 5
 
-
-DPULGARARRIBA = 1
-DPULGARABAJO = 0.5
-DMENIQUEARRIBA = 1.4
-DINDICEARRIBA = 1.6
-DMEDIOARRIBA = 1.5
-DANULARARRIBA = 1.5
+# Configuración del Inventario
+KILLS_PARA_ULTI = 5
+PROBABILIDAD_DROP = 0.4 # 40% de que caiga un objeto al matar un enemigo
 
 pygame.init()
-
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Dianas")
-# Ocultar el cursor del sistema: usaremos la mira/puntero dibujado por el juego
+pygame.display.set_caption("Juego: Disparo, Inventario y Pausa")
 pygame.mouse.set_visible(False)
-
 clock = pygame.time.Clock()
 
-BACKGROUND_IMAGE = "media/Valle.jpg"
-
-background = pygame.image.load(BACKGROUND_IMAGE).convert()
-background = pygame.transform.scale(
-    background,
-    (WIDTH, HEIGHT)
-)
-
 font = pygame.font.Font(None, 36)
-
-
-
-
-# =========================================================
-# VARIABLES COMPARTIDAS ENTRE HILOS
-# =========================================================
-
-running = True
-trigger_gesture = False
-
-stop_gesture = False
-
-# Coordenadas de la mano
-hand_x = 0
-hand_y = 0
-
-# Lock para evitar problemas al acceder a las variables
-lock = threading.Lock()
-
+font_small = pygame.font.Font(None, 24)
+font_menu = pygame.font.Font(None, 72) 
 
 # =========================================================
-# DIANAS
+# CARGA DE RECURSOS E IMÁGENES
 # =========================================================
+try: background = pygame.transform.scale(pygame.image.load("media/Valle.jpg").convert(), (WIDTH, HEIGHT))
+except: background = pygame.Surface((WIDTH, HEIGHT)); background.fill((50, 80, 120))
 
-TARGET_RADIUS = 40
-targets = []
+try: pause_sprite = pygame.image.load("media/pause.png").convert_alpha()
+except: pause_sprite = None
 
-# Spawn settings (campo de tiro tipo Valorant)
-MAX_TARGETS = 8          # máximas dianas simultáneas
-SPAWN_INTERVAL_MS = 4000 # intervalo en ms entre apariciones
-TARGET_LIFETIME_MS = 10000  # tiempo en ms antes de que una diana penalice si no es alcanzada
-PENALTY_DAMAGE = 5        # daño aplicado si la diana expira
-
-
-def crear_diana():
-    return {
-        "x": random.randint(
-            TARGET_RADIUS,
-            WIDTH - TARGET_RADIUS
-        ),
-        "y": random.randint(
-            TARGET_RADIUS + 60,
-            HEIGHT - TARGET_RADIUS
-        ),
-        "spawn_time": pygame.time.get_ticks()
-    }
-
-# Sprite de diana (puedes cambiar el nombre del archivo PNG)
-TARGET_IMAGE = "media/Soldier.png"
 try:
-    target_sprite = pygame.image.load(TARGET_IMAGE).convert_alpha()
-    # Escalar al tamaño del radio objetivo (diámetro)
+    target_sprite = pygame.image.load("media/Soldier.png").convert_alpha()
     target_sprite = pygame.transform.scale(target_sprite,(TARGET_RADIUS * 2, TARGET_RADIUS * 2))
-    print(f"Sprite de diana cargado: {TARGET_IMAGE}")
-except Exception as e:
-    print(f"No se pudo cargar '{TARGET_IMAGE}': {e}. Usando diana dibujada por código.")
-    target_sprite = None
+except: target_sprite = None
 
-# Efectos y sonido al expirar dianas
-EFFECT_DURATION_MS = 600
-effects = []  # lista de efectos activos: dicts con x,y,start_time
-EXPIRE_SOUND_FILE = "media/expire.wav"
-expire_sound = None
-try:
-    pygame.mixer.init()
-    expire_sound = pygame.mixer.Sound(EXPIRE_SOUND_FILE)
-    print(f"Sonido de expiración cargado: {EXPIRE_SOUND_FILE}")
-except Exception as e:
-    expire_sound = None
-    print(f"No se pudo cargar sonido '{EXPIRE_SOUND_FILE}': {e}. Continuando sin sonido.")
+# Sonidos
+try: pygame.mixer.init()
+except: pass
+try: expire_sound = pygame.mixer.Sound("media/expire.wav")
+except: expire_sound = None
+try: shoot_sound = pygame.mixer.Sound("media/pistola.mp3")
+except: shoot_sound = None
 
-# Sprite del puntero de la mano (usa media/hand.png por defecto)
-HAND_IMAGE = "media/crosshair.png"
-HAND_SIZE = (40, 40)
-try:
-    hand_sprite = pygame.image.load(HAND_IMAGE).convert_alpha()
-    hand_sprite = pygame.transform.scale(hand_sprite, HAND_SIZE)
-    print(f"Sprite de mano cargado: {HAND_IMAGE}")
-except Exception as e:
-    hand_sprite = None
-    print(f"No se pudo cargar '{HAND_IMAGE}': {e}. Usando puntero por código.")
-
-# Inicialmente dejamos unas pocas dianas para empezar
-for _ in range(2):
-    targets.append(crear_diana())
-
-# Evento de spawn periódico
-SPAWN_EVENT = pygame.USEREVENT + 1
-pygame.time.set_timer(SPAWN_EVENT, SPAWN_INTERVAL_MS)
-
-
-def dibujar_diana(x, y):
-    # Si hay un sprite cargado, lo usamos (centrado en x,y)
-    if target_sprite:
-        rect = target_sprite.get_rect(center=(x, y))
-        screen.blit(target_sprite, rect)
-        return
-
-    # Fallback: dibujar diana con círculos si falta el sprite
-    pygame.draw.circle(
-        screen,
-        (220, 220, 220),
-        (x, y),
-        TARGET_RADIUS
-    )
-
-    pygame.draw.circle(
-        screen,
-        (200, 40, 40),
-        (x, y),
-        int(TARGET_RADIUS * 0.75)
-    )
-
-    pygame.draw.circle(
-        screen,
-        (245, 245, 245),
-        (x, y),
-        int(TARGET_RADIUS * 0.50)
-    )
-
-    pygame.draw.circle(
-        screen,
-        (220, 40, 40),
-        (x, y),
-        int(TARGET_RADIUS * 0.25)
-    )
-
+# Rutas preparadas para los iconos del inventario
+RUTAS_INVENTARIO = {
+    8: "media/MedKit.png",
+    12: "media/explosive_bullet.png",
+    16: "media/shield.png",
+    20: "media/nuke.png"
+}
+imagenes_inventario = {}
+for key, ruta in RUTAS_INVENTARIO.items():
+    try:
+        img = pygame.image.load(ruta).convert_alpha()
+        imagenes_inventario[key] = pygame.transform.scale(img, (48, 48))
+    except:
+        imagenes_inventario[key] = None
 
 # =========================================================
-# PUNTUACIÓN
+# VARIABLES COMPARTIDAS (HILOS)
 # =========================================================
+lock = threading.Lock()
+running = True
 
-def calcular_puntuacion(x, y, diana):
+# Coordenadas y acciones (Cámara -> Pygame)
+hand_x, hand_y = 0, 0
+trigger_shoot = False
+trigger_pause = False
+trigger_unpause = False
+items_usados_buffer = []
 
-    distancia = math.hypot(
-        x - diana["x"],
-        y - diana["y"]
-    )
+# Estado del juego (Pygame -> Cámara)
+game_paused = False
 
-    if distancia > TARGET_RADIUS:
-        return 0
-
-    puntuacion = int(
-        100 * (1 - distancia / TARGET_RADIUS)
-    )
-
-    return max(10, puntuacion)
-
-# Calcular posición relativa
-def calcularDistancia(p1x, p1y, p2x, p2y):
-    return math.hypot(p1x - p2x, p1y - p2y)
-
-
-# Detectar pulgar abajo
-def pulgar_abierto(hand_landmarks) -> bool:
-
-    thumb_up = False
-
-    lm = hand_landmarks.landmark
-
-    # Punta del pulgar
-    thumb_tip = lm[4]
-
-    # Punta del índice
-    index_tip = lm[8]
-
-    # Referencia para normalizar el tamaño de la mano
-    wrist = lm[0]
-    middle_mcp = lm[9]
-
-    # calculamos la posicion del pulgar
-    d_thumb_index = calcularDistancia(thumb_tip.x,thumb_tip.y,index_tip.x, index_tip.y)
-
-    # Tamaño de la mano
-    hand_size = calcularDistancia(wrist.x,wrist.y,middle_mcp.x,middle_mcp.y)
-
-    # Distancia relativa
-    d_relativa = d_thumb_index / hand_size
-    #print(d_relativa)
-
-    if d_relativa < DPULGARARRIBA :
-        thumb_up = True
-
-    return thumb_up
-
-# Detectar stop
-def palma_abierta(hand_landmarks) -> bool:
-
-    open_palm = False
-
-    lm = hand_landmarks.landmark
-
-    # Punta del pulgar
-    thumb_tip = lm[4]
-
-    # Punta del índice
-    index_tip = lm[8]
-
-    # Punta del meñique
-    pinky_tip = lm[20]
-
-    # Punta del corazón
-    middle_tip = lm[12]
-
-    # Punta del anular
-    ring_tip = lm[16]
-
-    # Referencia para normalizar el tamaño de la mano
-    wrist = lm[0]
-    middle_mcp = lm[9]
-
-    # calculamos la posicion del pulgar
-    d_thumb_wrist = calcularDistancia(thumb_tip.x,thumb_tip.y,wrist.x, wrist.y)
-    d_pinky_wrist = calcularDistancia(pinky_tip.x,pinky_tip.y, wrist.x, wrist.y)
-    d_index_wrist = calcularDistancia(index_tip.x,index_tip.y, wrist.x, wrist.y)
-    d_middle_wrist = calcularDistancia(middle_tip.x, middle_tip.y, wrist.x, wrist.y)
-    d_ring_wrist = calcularDistancia(ring_tip.x, ring_tip.y, wrist.x, wrist.y)
-    
-    # Tamaño de la mano
-    hand_size = calcularDistancia(wrist.x,wrist.y,middle_mcp.x,middle_mcp.y)
-
-        # Distancia relativa
-    d_thumb_wrist = d_thumb_wrist / hand_size
-    d_pinky_wrist = d_pinky_wrist / hand_size
-    d_index_wrist = d_index_wrist / hand_size
-    d_middle_wrist = d_middle_wrist / hand_size
-    d_ring_wrist = d_ring_wrist / hand_size
-
-
-    #print("pulgar:")
-    #print(d_thumb_wrist)
-    #print("meñique:")
-    #print(d_pinky_wrist)
-    #print("indice:")
-    #print(d_index_wrist)
-
-    if d_thumb_wrist > DPULGARARRIBA and d_pinky_wrist > DMENIQUEARRIBA and d_index_wrist > DINDICEARRIBA and d_ring_wrist > DANULARARRIBA and d_middle_wrist > DMEDIOARRIBA  :
-        open_palm = True
-
-    return open_palm
-               
 # =========================================================
-# HILO DE MEDIAPIPE + OPENCV
+# FUNCIONES AUXILIARES Y CLASES
 # =========================================================
+def calcular_distancia(punto1, punto2):
+    return math.hypot(punto1.x - punto2.x, punto1.y - punto2.y)
 
-def camara_thread():
+def capturar_y_desenfocar(superficie_origen, factor=6):
+    ancho, alto = superficie_origen.get_width(), superficie_origen.get_height()
+    pequena = pygame.transform.smoothscale(superficie_origen, (ancho // factor, alto // factor))
+    desenfocada = pygame.transform.smoothscale(pequena, (ancho, alto))
+    capa_oscura = pygame.Surface((ancho, alto))
+    capa_oscura.set_alpha(150)
+    desenfocada.blit(capa_oscura, (0, 0))
+    return desenfocada
 
-    global running
-    global hand_x
-    global hand_y
-
-    global trigger_gesture
-    global stop_gesture
-
-    global last_shot_time
-     
-
-    mp_drawing = mp.solutions.drawing_utils
-    mp_hands = mp.solutions.hands
-
-    gesture_buffer = []
-    BUFFER_SIZE = 4
-
-    gatillo_activo = False  #controla si se levanta el gatillo para no disparar continuamente
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-
-    with mp_hands.Hands(
-        static_image_mode=False,
-        max_num_hands=2,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    ) as hands:
-
-        while running:
-
-            ret, frame = cap.read()
-
-            if not ret:
-                print("No se pudo leer la cámara")
-                break
-
-            # Espejo
-            frame = cv2.flip(frame, 1)
-
-            # RGB para MediaPipe
-            frame_rgb = cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
-
-            # Detectar manos
-            results = hands.process(frame_rgb)
-
-            # -------------------------------------------------
-            # OBTENER COORDENADAS DE LA MANO
-            # -------------------------------------------------
-
-            if results.multi_hand_landmarks:
-
-                # Usamos la primera mano detectada
-                hand = results.multi_hand_landmarks[0]
-
-                # Landmark 8 = punta del dedo índice
-                index_finger = hand.landmark[8]
-
-                stop_gesture_local = palma_abierta(hand) #Comprobamos si hay stop
-
-                trigger_gesture_local =  pulgar_abierto(hand) #Comprobamos si hay disparo
-
-
-                # 2. Exclusión mutua -> un solo gesto "crudo" para este frame
-                if stop_gesture_local:
-                    gesto_raw = "stop"
-                elif trigger_gesture_local:
-                    gesto_raw = "trigger"
-                else:
-                    gesto_raw = "none"
-
-                # 3. Meter en el buffer de debounce
-                gesture_buffer.append(gesto_raw)
-                if len(gesture_buffer) > BUFFER_SIZE:
-                    gesture_buffer.pop(0)
-
-                # 4. Confirmar solo si TODO el buffer coincide
-                if len(gesture_buffer) == BUFFER_SIZE and gesture_buffer.count(gesture_buffer[0]) == BUFFER_SIZE:
-                    gesto_confirmado = gesture_buffer[0]
-                else:
-                    gesto_confirmado = None  # aún no hay consenso, no cambiamos nada
-                                    
-                height, width, _ = frame.shape
-
-                # Coordenadas de cámara
-                camera_x = int(
-                    index_finger.x * width
-                )
-
-                camera_y = int(
-                    index_finger.y * height
-                )
-
-                # Convertir a coordenadas de Pygame
-                pygame_x = int(
-                    index_finger.x * WIDTH
-                )
-
-                pygame_y = int(
-                    index_finger.y * HEIGHT
-                )
-
-                current_time = pygame.time.get_ticks()
-
-
-                # Guardar coordenadas de forma segura
-                with lock:
-                    hand_x = pygame_x
-                    hand_y = pygame_y
-
-                    if gesto_confirmado == "trigger": 
-                        if not gatillo_activo and (current_time - last_shot_time >= SHOT_COOLDOWN_MS):
-                            trigger_gesture = True
-                            stop_gesture = False
-                            last_shot_time = current_time
-                            gatillo_activo = True #el gatillo está activo despues de una bala: no disparar
-                        else:
-                            trigger_gesture = False 
-                    elif gesto_confirmado == "stop":
-                        trigger_gesture = False
-                        stop_gesture = True
-                        gatillo_activo = False 
-                    elif gesto_confirmado == "none":
-                        trigger_gesture = False
-                        stop_gesture = False
-                        gatillo_activo = False #se suelte el gatillo
-                    
-
-                # Dibujar mano
-                for hand_landmarks in results.multi_hand_landmarks:
-
-                    mp_drawing.draw_landmarks(
-                        frame,
-                        hand_landmarks,
-                        mp_hands.HAND_CONNECTIONS
-                    )
-
-            # Mostrar cámara
-            cv2.imshow(
-                "Camara - MediaPipe",
-                frame
-            )
-
-            # ESC para salir
-            if cv2.waitKey(1) & 0xFF == 27:
-                running = False
-                break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-# ==========================================
-# 1. CLASE BARRA DE VIDA
-# ==========================================
 class BarraVida:
     def __init__(self, x, y, ancho, alto, vida_maxima):
-        self.x = x
-        self.y = y
-        self.ancho = ancho
-        self.alto = alto
+        self.rect_base = pygame.Rect(x, y, ancho, alto)
         self.vida_maxima = vida_maxima
         self.vida_actual = vida_maxima
-        self.vida_animada = vida_maxima  # Controla la barra visual que baja suavemente
+        self.vida_animada = vida_maxima 
 
     def recibir_dano(self, cantidad):
         self.vida_actual = max(self.vida_actual - cantidad, 0)
@@ -457,332 +114,492 @@ class BarraVida:
         self.vida_actual = min(self.vida_actual + cantidad, self.vida_maxima)
 
     def dibujar(self, superficie):
-        # 1. Efecto de interpolación: acerca la barra animada a la real suavemente
         self.vida_animada += (self.vida_actual - self.vida_animada) * 0.1
+        w_actual = (self.vida_actual / self.vida_maxima) * self.rect_base.width
+        w_animado = (self.vida_animada / self.vida_maxima) * self.rect_base.width
 
-        # 2. Calcular los anchos proporcionales
-        ancho_actual = (self.vida_actual / self.vida_maxima) * self.ancho
-        ancho_animado = (self.vida_animada / self.vida_maxima) * self.ancho
+        color = (46, 204, 113)      
+        if self.vida_actual / self.vida_maxima <= 0.5: color = (241, 196, 15)  
+        if self.vida_actual / self.vida_maxima <= 0.2: color = (231, 76, 60)   
 
-        # 3. Definir los rectángulos
-        rect_fondo = pygame.Rect(self.x, self.y, self.ancho, self.alto)
-        rect_animado = pygame.Rect(self.x, self.y, ancho_animado, self.alto)
-        rect_actual = pygame.Rect(self.x, self.y, ancho_actual, self.alto)
+        pygame.draw.rect(superficie, (40, 40, 40), self.rect_base, border_radius=6)
+        pygame.draw.rect(superficie, (255, 100, 100), (self.rect_base.x, self.rect_base.y, w_animado, self.rect_base.height), border_radius=6)
+        pygame.draw.rect(superficie, color, (self.rect_base.x, self.rect_base.y, w_actual, self.rect_base.height), border_radius=6)
+        pygame.draw.rect(superficie, (200, 200, 200), self.rect_base, width=2, border_radius=6)
 
-        # 4. Paleta de colores más moderna (código RGB)
-        ratio = self.vida_actual / self.vida_maxima
-        color_vida = (46, 204, 113)      # Verde esmeralda
-        if ratio <= 0.5:
-            color_vida = (241, 196, 15)  # Amarillo mostaza
-        if ratio <= 0.2:
-            color_vida = (231, 76, 60)   # Rojo carmesí
+class HUDInventario:
+    def __init__(self):
+        self.ancho_slot = 60
+        self.alto_slot = 60
+        self.espaciado = 10
+        self.ancho_total = (self.ancho_slot * 4) + (self.espaciado * 3)
+        self.x_inicio = (WIDTH - self.ancho_total) // 2
+        self.y_inicio = HEIGHT - 130  
 
-        # 5. Dibujar en capas usando border_radius para las esquinas redondeadas
+    def dibujar(self, superficie, inventario, ulti_kills):
+        claves = [8, 12, 16, 20]
+        nombres = ["Botiquín", "Explosiva", "Escudo", "Ulti"]
         
-        # Capa 1: Fondo oscuro (hueco vacío)
-        pygame.draw.rect(superficie, (40, 40, 40), rect_fondo, border_radius=6)
-        
-        # Capa 2: Barra de daño residual (rojo claro/rosado que se queda atrás)
-        pygame.draw.rect(superficie, (255, 100, 100), rect_animado, border_radius=6)
-        
-        # Capa 3: Barra de vida real que cambia de color
-        pygame.draw.rect(superficie, color_vida, rect_actual, border_radius=6)
-        
-        # Capa 4: Borde exterior (grosor de 2 píxeles)
-        pygame.draw.rect(superficie, (200, 200, 200), rect_fondo, width=2, border_radius=6)
+        for i, clave in enumerate(claves):
+            x_slot = self.x_inicio + i * (self.ancho_slot + self.espaciado)
+            rect_slot = pygame.Rect(x_slot, self.y_inicio, self.ancho_slot, self.alto_slot)
+            
+            pygame.draw.rect(superficie, (139, 139, 139), rect_slot)
+            pygame.draw.rect(superficie, (55, 55, 55), rect_slot, 3)
+            pygame.draw.rect(superficie, (255, 255, 255), rect_slot, 1) 
+            
+            img = imagenes_inventario.get(clave)
+            if img:
+                superficie.blit(img, img.get_rect(center=rect_slot.center))
+            else:
+                txt_placeholder = font.render(nombres[i][0], True, (200, 200, 200))
+                superficie.blit(txt_placeholder, txt_placeholder.get_rect(center=rect_slot.center))
 
-# ==========================================
-# CLASE MIRA ENCAPSULADA
-# ==========================================
+            if clave == 20: 
+                if inventario[clave] > 0:
+                    txt_carga = font_small.render("LISTA", True, (0, 255, 255))
+                    superficie.blit(txt_carga, (x_slot + 5, self.y_inicio + 40))
+                else:
+                    altura_carga = (self.alto_slot - 4) * (ulti_kills / KILLS_PARA_ULTI)
+                    rect_carga = pygame.Rect(x_slot + 2, self.y_inicio + self.alto_slot - 2 - altura_carga, self.ancho_slot - 4, altura_carga)
+                    pygame.draw.rect(superficie, (100, 0, 255, 100), rect_carga) 
+            else:
+                cantidad = inventario[clave]
+                if cantidad > 0:
+                    txt_cant = font_small.render(str(cantidad), True, (255, 255, 255))
+                    txt_shadow = font_small.render(str(cantidad), True, (0, 0, 0))
+                    superficie.blit(txt_shadow, (x_slot + self.ancho_slot - 14, self.y_inicio + self.alto_slot - 19))
+                    superficie.blit(txt_cant, (x_slot + self.ancho_slot - 15, self.y_inicio + self.alto_slot - 20))
+
 class Mira:
-    def __init__(self, ruta_imagen, tamaño=(50, 50)):
-        # Procesar evento para la mira (clase Mira)
-        try:
-            mira.procesar_evento(event)
-        except NameError:
-            pass
-        # 1. Cargar la imagen blanca
-        try:
-            self.blanca = pygame.image.load(ruta_imagen).convert_alpha()
-            self.blanca = pygame.transform.scale(self.blanca, tamaño)
-        except FileNotFoundError:
-            # Respaldo si no encuentra el archivo
-            self.blanca = pygame.Surface(tamaño, pygame.SRCALPHA)
-            centro = (tamaño[0]//2, tamaño[1]//2)
-            pygame.draw.circle(self.blanca, (255, 255, 255), centro, 20, 2)
-            pygame.draw.line(self.blanca, (255, 255, 255), (centro[0], 0), (centro[0], tamaño[1]), 2)
-            pygame.draw.line(self.blanca, (255, 255, 255), (0, centro[1]), (tamaño[0], centro[1]), 2)
-
-        # 2. Generar automáticamente la versión roja
-        self.roja = self.blanca.copy()
-        self.roja.fill((255, 0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-        
-        # 3. Estado de la mira
+    def __init__(self):
         self.disparando = False
+        self.explosiva = False
 
-    def procesar_evento(self, evento):
-        # Actualizar el estado si se hace clic
-        if evento.type == pygame.MOUSEBUTTONDOWN and evento.button == 1:
-            self.disparando = True
-        elif evento.type == pygame.MOUSEBUTTONUP and evento.button == 1:
-            self.disparando = False
+    def dibujar(self, superficie, pos):
+        if pos:
+            # Si hay munición explosiva, el radio es enorme (120), si no, normal (25)
+            radio = 120 if self.explosiva else 25
+            color = (255, 0, 0) if self.disparando else (255, 255, 255)
+            grosor = 3 if self.explosiva else 2
+            
+            # Círculo principal
+            pygame.draw.circle(superficie, color, pos, radio, grosor)
+            
+            # Líneas de la cruz
+            pygame.draw.line(superficie, color, (pos[0] - radio - 5, pos[1]), (pos[0] + radio + 5, pos[1]), grosor)
+            pygame.draw.line(superficie, color, (pos[0], pos[1] - radio - 5), (pos[0], pos[1] + radio + 5), grosor)
+            
+            # Punto rojo central siempre presente
+            pygame.draw.circle(superficie, (255, 0, 0), pos, 3)
 
-    def dibujar(self, superficie, pos=None):
-        # Elegir la imagen según el estado
-        imagen_actual = self.roja if self.disparando else self.blanca
-
-        # Si se pasa `pos`, la usamos (por ejemplo la posición de la mano),
-        # si no, usamos la posición del ratón.
-        if pos is None:
-            pos = pygame.mouse.get_pos()
-
-        rect_mira = imagen_actual.get_rect(center=pos)
-        superficie.blit(imagen_actual, rect_mira)
 # =========================================================
-# CREAR HILO DE CÁMARA
+# HILO DE MEDIAPIPE (GESTOS Y ESTADOS)
 # =========================================================
+def camara_thread():
+    global running, hand_x, hand_y, trigger_shoot, trigger_pause, trigger_unpause
 
-thread_camera = threading.Thread(
-    target=camara_thread
-)
+    mp_hands = mp.solutions.hands
+    mp_drawing = mp.solutions.drawing_utils
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
+    nombres_objetos = {8: "Dedo Índice", 12: "Dedo Medio", 16: "Dedo Anular", 20: "Dedo Meñique"}
+    inventario_abierto = False
+    estado_dedos_doblados = {8: False, 12: False, 16: False, 20: False}
+    pulgar_listo_para_disparar = False
+    
+    tiempo_inicio_pausa = 0
+    tiempo_inicio_reanudar = 0
+
+    with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5, min_tracking_confidence=0.5) as hands:
+        while running:
+            ret, frame = cap.read()
+            if not ret: break
+
+            frame = cv2.flip(frame, 1)
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            resultados = hands.process(frame_rgb)
+
+            with lock:
+                estado_pausa = game_paused
+
+            if resultados.multi_hand_landmarks and resultados.multi_handedness:
+                mano = resultados.multi_hand_landmarks[0]
+                etiqueta_mano = resultados.multi_handedness[0].classification[0].label
+                mp_drawing.draw_landmarks(frame, mano, mp_hands.HAND_CONNECTIONS)
+                
+                puntos = mano.landmark
+                muneca = puntos[0]
+
+                with lock:
+                    hand_x, hand_y = int(puntos[8].x * WIDTH), int(puntos[8].y * HEIGHT)
+
+                indice_ext = calcular_distancia(puntos[8], muneca) > calcular_distancia(puntos[6], muneca)
+                medio_ext = calcular_distancia(puntos[12], muneca) > calcular_distancia(puntos[10], muneca)
+                anular_ext = calcular_distancia(puntos[16], muneca) > calcular_distancia(puntos[14], muneca)
+                menique_ext = calcular_distancia(puntos[20], muneca) > calcular_distancia(puntos[18], muneca)
+                
+                es_palma_abierta = indice_ext and medio_ext and anular_ext and menique_ext
+                es_puno_cerrado = not (indice_ext or medio_ext or anular_ext or menique_ext)
+
+                if estado_pausa:
+                    cv2.putText(frame, "JUEGO PAUSADO: Mantenga puno cerrado para salir", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    if es_puno_cerrado:
+                        if tiempo_inicio_reanudar == 0: tiempo_inicio_reanudar = time.time()
+                        elapsed = time.time() - tiempo_inicio_reanudar
+                        cv2.putText(frame, f"Reanudando... {int((elapsed/2)*100)}%", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        
+                        if elapsed >= 2.0:
+                            print("\n[+] JUEGO REANUDADO")
+                            with lock: trigger_unpause = True
+                            tiempo_inicio_reanudar = 0
+                    else:
+                        tiempo_inicio_reanudar = 0
+                
+                else:
+                    mcp_medio = puntos[9]
+                    es_horizontal = abs(mcp_medio.x - muneca.x) > 1.2 * abs(mcp_medio.y - muneca.y)
+                    dorso_hacia_camara = puntos[2].y < puntos[17].y
+
+                    estado_anterior_inv = inventario_abierto
+                    inventario_abierto = es_horizontal and dorso_hacia_camara
+
+                    if inventario_abierto and not estado_anterior_inv: print("\n[+] INVENTARIO ABIERTO")
+                    elif not inventario_abierto and estado_anterior_inv: print("[-] INVENTARIO CERRADO")
+
+                    if inventario_abierto:
+                        tiempo_inicio_pausa = 0
+                        pulgar_listo_para_disparar = False
+                        
+                        cv2.putText(frame, "INVENTARIO ACTIVO", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                        puntas_dedos = [8, 12, 16, 20]
+                        for punta_idx in puntas_dedos:
+                            dedo_doblado = calcular_distancia(puntos[punta_idx], muneca) < calcular_distancia(puntos[punta_idx - 2], muneca)
+                            if dedo_doblado and not estado_dedos_doblados[punta_idx]:
+                                print(f"   -> Usando gesto: {nombres_objetos[punta_idx]}")
+                                with lock:
+                                    items_usados_buffer.append(punta_idx) 
+                            estado_dedos_doblados[punta_idx] = dedo_doblado
+
+                    else:
+                        for clave in estado_dedos_doblados.keys(): estado_dedos_doblados[clave] = False
+
+                        if es_palma_abierta:
+                            pulgar_listo_para_disparar = False
+                            if tiempo_inicio_pausa == 0: tiempo_inicio_pausa = time.time()
+                            elapsed = time.time() - tiempo_inicio_pausa
+                            cv2.putText(frame, f"Pausando... {int((elapsed/2)*100)}%", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                            
+                            if elapsed >= 2.0:
+                                print("\n[-] JUEGO EN PAUSA")
+                                with lock: trigger_pause = True
+                                tiempo_inicio_pausa = 0
+                        else:
+                            tiempo_inicio_pausa = 0
+                            es_mano_derecha = (etiqueta_mano == "Right")
+                            palma_de_frente = puntos[5].x < puntos[17].x 
+                            gesto_pistola = indice_ext and not medio_ext and not anular_ext and not menique_ext
+
+                            if es_mano_derecha and palma_de_frente and gesto_pistola:
+                                cv2.putText(frame, "ARMA LISTA", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+                                pulgar_extendido = puntos[4].x < puntos[3].x
+                                
+                                if pulgar_extendido:
+                                    pulgar_listo_para_disparar = True
+                                    cv2.putText(frame, "Gatillo: Listo", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                                else:
+                                    if pulgar_listo_para_disparar:
+                                        print("[!] PUM! Disparo efectuado")
+                                        with lock: trigger_shoot = True
+                                        pulgar_listo_para_disparar = False
+                                    cv2.putText(frame, "Gatillo: Apretado", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                            else:
+                                pulgar_listo_para_disparar = False
+
+            cv2.imshow("Camara - MediaPipe", frame)
+            if cv2.waitKey(1) & 0xFF == 27:
+                running = False
+                break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+# =========================================================
+# INICIALIZACIÓN DE BUCLE PRINCIPAL
+# =========================================================
+thread_camera = threading.Thread(target=camara_thread)
 thread_camera.daemon = True
 thread_camera.start()
 
-
-# =========================================================
-# BUCLE PRINCIPAL DE PYGAME
-# =========================================================
-
-# Crear una instancia de la barra de vida para el jugador
-# Posición (WIDTH/2, HEIGHT-100), 200px de ancho, 25px de alto, 100 de vida máxima
+# Los enemigos ya no spawnean a menos de 50px de los bordes
+targets = [{"x": random.randint(TARGET_RADIUS + 50, WIDTH - TARGET_RADIUS - 50), "y": random.randint(TARGET_RADIUS + 60, HEIGHT - TARGET_RADIUS), "spawn_time": pygame.time.get_ticks()} for _ in range(2)]
+effects = []
+mensajes_visuales = [] 
+drops_flotantes = [] 
+pygame.time.set_timer(pygame.USEREVENT + 1, SPAWN_INTERVAL_MS)
 
 barra_jugador = BarraVida((WIDTH/2)-150, HEIGHT-50, 300, 25, 100)
-mira = Mira("media/crosshair.png", tamaño=(40, 40))
+hud_inventario = HUDInventario()
+mira = Mira()
 puntuacion_total = 0
 
+cantidades_inventario = {8: 0, 12: 0, 16: 0, 20: 0}
+kills_para_ulti_actual = 0
+nombres_items = {8: "Botiquín", 12: "Munición Explosiva", 16: "Escudo", 20: "HABILIDAD DEFINITIVA"}
+
+# Variables del Escudo
+shield_active = False
+shield_start_time = 0
+SHIELD_DURATION_MS = 5000
+
+# Variables Munición Explosiva
+explosive_active = False
+explosive_start_time = 0
+EXPLOSIVE_DURATION_MS = 5000
+
+pause_background = None
+pause_start_time = 0
+
 while running:
-
-    # =====================================================
-    # EVENTOS
-    # =====================================================
-
-    for event in pygame.event.get():
-
-        if event.type == pygame.QUIT:
-            running = False
-
-        # También puedes disparar con el ratón
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-
-            if event.button == 1:
-
-                mouse_x, mouse_y = pygame.mouse.get_pos()
-
-                for diana in targets[:]:
-
-                    distancia = math.hypot(
-                        mouse_x - diana["x"],
-                        mouse_y - diana["y"]
-                    )
-
-                    if distancia <= TARGET_RADIUS:
-
-                        puntos = calcular_puntuacion(
-                            mouse_x,
-                            mouse_y,
-                            diana
-                        )
-
-                        puntuacion_total += puntos
-
-                        targets.remove(diana)
-
-                        break
-        # Evento periódico para generar nuevas dianas
-        elif event.type == SPAWN_EVENT:
-            if len(targets) < MAX_TARGETS:
-                targets.append(crear_diana())
-
-
-
-
-    # =====================================================
-    # OBTENER POSICIÓN DE LA MANO
-    # =====================================================
+    current_time = pygame.time.get_ticks()
 
     with lock:
-        current_hand_x = hand_x
-        current_hand_y = hand_y
-        current_trigger = trigger_gesture
-        current_stop = stop_gesture
-    # =====================================================
-    # COMPROBAR SI LA MANO TOCA UNA DIANA
-    # =====================================================
-
-    for diana in targets[:]:
-
+        cur_hand_x, cur_hand_y = hand_x, hand_y
+        local_trigger_shoot = trigger_shoot
+        local_trigger_pause = trigger_pause
+        local_trigger_unpause = trigger_unpause
         
+        items_a_usar = list(items_usados_buffer)
+        items_usados_buffer.clear()
 
-        distancia = math.hypot(
-            current_hand_x - diana["x"],
-            current_hand_y - diana["y"]
-        )
+        if trigger_shoot: trigger_shoot = False
+        if trigger_pause: trigger_pause = False
+        if trigger_unpause: trigger_unpause = False
 
-        if distancia <= TARGET_RADIUS and current_trigger: #si las posiciones coinciden y ejecutar el trigger:
+    if local_trigger_shoot and shoot_sound:
+        try: shoot_sound.play()
+        except: pass
+
+    # =====================================================
+    # LOGICA DE USO DEL INVENTARIO
+    # =====================================================
+    for item in items_a_usar:
+        if cantidades_inventario[item] > 0:
+            cantidades_inventario[item] -= 1
+            if item == 8: # Botiquín
+                barra_jugador.curar(25)
+                mensajes_visuales.append({"text": "+25 Salud (Botiquín)", "time": current_time, "color": (50, 255, 50)})
+            elif item == 12: # Munición Explosiva
+                explosive_active = True
+                explosive_start_time = current_time
+                mensajes_visuales.append({"text": "¡Munición Explosiva por 5s!", "time": current_time, "color": (255, 150, 50)})
+            elif item == 16: # Escudo
+                shield_active = True
+                shield_start_time = current_time
+                mensajes_visuales.append({"text": "¡Escudo Activado por 5s!", "time": current_time, "color": (50, 200, 255)})
+            elif item == 20: # Ulti
+                mensajes_visuales.append({"text": "¡HABILIDAD DEFINITIVA DESATADA!", "time": current_time, "color": (255, 215, 0)})
+                for diana in targets[:]:
+                    effects.append({"x": diana["x"], "y": diana["y"], "start_time": current_time})
+                targets.clear()
+        else:
+            mensajes_visuales.append({"text": "No tienes ese objeto", "time": current_time, "color": (255, 50, 50)})
+
+
+    # =====================================================
+    # CONTROL DE ESTADOS DE PYGAME Y TIEMPOS ACTIVOS
+    # =====================================================
+    if barra_jugador.vida_actual <= 0:
+        screen.blit(capturar_y_desenfocar(screen), (0, 0))
+        txt = font_menu.render("GAME OVER", True, (255, 50, 50))
+        screen.blit(txt, txt.get_rect(center=(WIDTH//2, HEIGHT//2)))
+        pygame.display.flip()
+        pygame.time.wait(3000)
+        running = False
+        continue
+
+    # Verificación de tiempos de habilidades
+    if shield_active and current_time - shield_start_time >= SHIELD_DURATION_MS:
+        shield_active = False
+        
+    if explosive_active and current_time - explosive_start_time >= EXPLOSIVE_DURATION_MS:
+        explosive_active = False
+
+    if local_trigger_pause and not game_paused:
+        with lock: game_paused = True
+        pause_background = capturar_y_desenfocar(screen)
+        pause_start_time = current_time
+
+    if local_trigger_unpause and game_paused:
+        with lock: game_paused = False
+        time_paused = current_time - pause_start_time
+        # Ajustamos temporizadores
+        for diana in targets: diana["spawn_time"] += time_paused
+        for eff in effects: eff["start_time"] += time_paused
+        for msg in mensajes_visuales: msg["time"] += time_paused
+        if shield_active: shield_start_time += time_paused 
+        if explosive_active: explosive_start_time += time_paused 
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT: running = False
+        elif event.type == pygame.USEREVENT + 1 and not game_paused and len(targets) < MAX_TARGETS:
+            # Spawn con margen de 50px
+            targets.append({"x": random.randint(TARGET_RADIUS + 50, WIDTH - TARGET_RADIUS - 50), "y": random.randint(TARGET_RADIUS + 60, HEIGHT - TARGET_RADIUS - 150), "spawn_time": current_time})
+
+    # =====================================================
+    # RENDERIZADO PRINCIPAL Y LÓGICA DE HIT MULTIPLE
+    # =====================================================
+    if game_paused:
+        screen.blit(pause_background, (0, 0))
+        if pause_sprite: screen.blit(pause_sprite, pause_sprite.get_rect(center=(WIDTH//2, HEIGHT//2 - 50)))
+        else: screen.blit(font_menu.render("PAUSA", True, (255, 255, 255)), font_menu.render("PAUSA", True, (255, 255, 255)).get_rect(center=(WIDTH//2, HEIGHT//2 - 50)))
+        txt_inst = font.render("Manten el PUÑO CERRADO 2s de frente para reanudar", True, (200, 200, 200))
+        screen.blit(txt_inst, txt_inst.get_rect(center=(WIDTH//2, HEIGHT//2 + 50)))
+    
+    else:
+        # 1. Evaluar tamaño del área de impacto
+        radio_impacto = 120 if explosive_active else TARGET_RADIUS
+        disparo_consumido = False
+        
+        # 2. Lógica de Colisión (Enemigos)
+        enemigos_golpeados = []
+        for diana in targets[:]:
+            distancia = math.hypot(cur_hand_x - diana["x"], cur_hand_y - diana["y"])
+            if distancia <= radio_impacto and local_trigger_shoot: 
+                enemigos_golpeados.append(diana)
+                
+        # Procesar aciertos a enemigos en bloque (permite acertar a varios de un tiro)
+        if enemigos_golpeados:
+            disparo_consumido = True
+            for diana in enemigos_golpeados:
+                puntuacion_total += max(10, int(100 * (1 - math.hypot(cur_hand_x - diana["x"], cur_hand_y - diana["y"]) / radio_impacto)))
+                
+                # Carga Ulti
+                if cantidades_inventario[20] == 0:
+                    kills_para_ulti_actual += 1
+                    if kills_para_ulti_actual >= KILLS_PARA_ULTI:
+                        cantidades_inventario[20] = 1
+                        kills_para_ulti_actual = 0
+                        mensajes_visuales.append({"text": "+ ULTI LISTA!", "time": current_time, "color": (255, 215, 0)})
+
+                # Spawn de Drops Físicos
+                if random.random() < PROBABILIDAD_DROP:
+                    drop_elegido = random.choice([8, 12, 16])
+                    drops_flotantes.append({"x": diana["x"], "y": diana["y"], "type": drop_elegido})
+                
+                if diana in targets:
+                    targets.remove(diana)
+                    
+                effects.append({"x": diana["x"], "y": diana["y"], "start_time": current_time})
+
+        # Comprobar si los enemigos expiran (se salta si lo hemos matado justo en este frame)
+        for diana in targets[:]:
+            if current_time - diana["spawn_time"] >= TARGET_LIFETIME_MS:
+                if not shield_active:
+                    effects.append({"x": diana["x"], "y": diana["y"], "start_time": current_time})
+                    if expire_sound: 
+                        try: expire_sound.play()
+                        except: pass
+                    barra_jugador.recibir_dano(PENALTY_DAMAGE)
+                
+                targets.remove(diana)
+
+        # 3. Lógica de Colisión (Drops Flotantes)
+        drops_recogidos = []
+        for drop in drops_flotantes[:]:
+            drop["y"] -= 2.5 
+            if drop["y"] < -50:
+                drops_flotantes.remove(drop)
+                continue
             
-            puntos = calcular_puntuacion(
-                current_hand_x,
-                current_hand_y,
-                diana
-            )
+            distancia_drop = math.hypot(cur_hand_x - drop["x"], cur_hand_y - drop["y"])
+            if distancia_drop <= radio_impacto and local_trigger_shoot:
+                drops_recogidos.append(drop)
+                
+        # Procesar drops recogidos en bloque
+        if drops_recogidos:
+            disparo_consumido = True
+            for drop in drops_recogidos:
+                cantidades_inventario[drop["type"]] += 1
+                mensajes_visuales.append({"text": f"+ {nombres_items[drop['type']]} Recogido", "time": current_time, "color": (255, 255, 255)})
+                if drop in drops_flotantes:
+                    drops_flotantes.remove(drop)
 
-            puntuacion_total += puntos
+        # Consumir el disparo (un solo tiro vale para todo lo que esté en el área)
+        if disparo_consumido:
+            local_trigger_shoot = False
 
-            targets.remove(diana)
+        # ==================================
+        # DIBUJADO EN PANTALLA
+        # ==================================
+        screen.blit(background, (0, 0))
+        
+        # Filtro Azul del Escudo
+        if shield_active:
+            shield_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            shield_overlay.fill((0, 150, 255, 60)) 
+            screen.blit(shield_overlay, (0, 0))
+            
+        # Textos superiores de habilidades (Escudo y Explosiva)
+        y_text = 70
+        if shield_active:
+            t_restante = SHIELD_DURATION_MS - (current_time - shield_start_time)
+            txt_shield = font_menu.render(f"ESCUDO: {math.ceil(t_restante / 1000)}s", True, (150, 220, 255))
+            screen.blit(txt_shield, txt_shield.get_rect(center=(WIDTH // 2, y_text)))
+            y_text += 60
+            
+        if explosive_active:
+            t_restante_exp = EXPLOSIVE_DURATION_MS - (current_time - explosive_start_time)
+            txt_exp = font_menu.render(f"EXPLOSIVA: {math.ceil(t_restante_exp / 1000)}s", True, (255, 150, 50))
+            screen.blit(txt_exp, txt_exp.get_rect(center=(WIDTH // 2, y_text)))
 
-            break
+        # Dibujar Enemigos y Drops
+        for diana in targets:
+            if target_sprite: screen.blit(target_sprite, target_sprite.get_rect(center=(diana["x"], diana["y"])))
+            else: pygame.draw.circle(screen, (200, 40, 40), (diana["x"], diana["y"]), TARGET_RADIUS)
 
-        if current_stop :
-            print("Stop")
-        if current_trigger :
-            print("Disparo")
-            current_trigger = False
+        for drop in drops_flotantes:
+            img = imagenes_inventario.get(drop["type"])
+            if img: screen.blit(img, img.get_rect(center=(drop["x"], drop["y"])))
+            else: pygame.draw.circle(screen, (0, 255, 0), (drop["x"], drop["y"]), 25) 
 
+        for eff in effects[:]:
+            elapsed = current_time - eff["start_time"]
+            if elapsed >= 600:
+                effects.remove(eff)
+                continue
+            t = elapsed / 600
+            r = int((TARGET_RADIUS * 2.5) * t) + 5
+            surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(surf, (255, 50, 50, int(255 * (1 - t))), (r, r), r)
+            screen.blit(surf, (eff["x"] - r, eff["y"] - r))
 
-    # =====================================================
-    # COMPROBAR Dianas expirada -> penalizar vida
-    # =====================================================
-    current_time = pygame.time.get_ticks()
-    for diana in targets[:]:
-        spawn = diana.get("spawn_time", 0)
-        if current_time - spawn >= TARGET_LIFETIME_MS:
-            # Añadir efecto visual y reproducir sonido
-            effects.append({
-                "x": diana["x"],
-                "y": diana["y"],
-                "start_time": current_time
-            })
-            if expire_sound:
-                try:
-                    expire_sound.play()
-                except Exception:
-                    pass
+        # Mensajes Flotantes 
+        for i, msg in enumerate(mensajes_visuales[:]):
+            elapsed = current_time - msg["time"]
+            if elapsed > 2000:
+                mensajes_visuales.remove(msg)
+                continue
+            alpha = max(0, 255 - int((elapsed / 2000) * 255))
+            txt_surf = font.render(msg["text"], True, msg["color"])
+            txt_surf.set_alpha(alpha)
+            y_offset = (HEIGHT // 2) - (i * 30) - int((elapsed / 2000) * 30)
+            screen.blit(txt_surf, txt_surf.get_rect(center=(WIDTH//2, y_offset)))
 
-            print(f"Diana en ({diana['x']}, {diana['y']}) ha expirado. -{PENALTY_DAMAGE} vida")
-            barra_jugador.recibir_dano(PENALTY_DAMAGE)
-            targets.remove(diana)
+        # Puntuación y HUD
+        screen.blit(font.render(f"Puntuación: {puntuacion_total}", True, (255, 255, 255)), (20, 20))
+        hud_inventario.dibujar(screen, cantidades_inventario, kills_para_ulti_actual)
+        barra_jugador.dibujar(screen)
 
-
-    # =====================================================
-    # FONDO
-    # =====================================================
-
-    screen.blit(
-        background,
-        (0, 0)
-    )
-    # Dibujar la barra de vida
-    barra_jugador.dibujar(screen)
-
-
-    # =====================================================
-    # DIANAS
-    # =====================================================
-
-    for diana in targets:
-
-        dibujar_diana(
-            diana["x"],
-            diana["y"]
-        )
-
-    # Dibujar efectos (fade/expand) de expiración
-    now = pygame.time.get_ticks()
-    for eff in effects[:]:
-        elapsed = now - eff["start_time"]
-        if elapsed >= EFFECT_DURATION_MS:
-            effects.remove(eff)
-            continue
-
-        t = elapsed / EFFECT_DURATION_MS
-        max_radius = TARGET_RADIUS * 2.5
-        radius = int(max_radius * t) + 5
-        alpha = int(255 * (1 - t))
-
-        diameter = radius * 2
-        surf = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
-        color = (255, 100, 100, alpha)
-        pygame.draw.circle(surf, color, (radius, radius), radius)
-
-        screen.blit(surf, (eff["x"] - radius, eff["y"] - radius))
-
-
-    # =====================================================
-    # PUNTUACIÓN
-    # =====================================================
-
-    texto = font.render(
-        f"Puntuación: {puntuacion_total}",
-        True,
-        (255, 255, 255)
-    )
-
-    screen.blit(
-        texto,
-        (20, 20)
-    )
-
-
-    # =====================================================
-    # COORDENADAS DE LA MANO
-    # =====================================================
-
-    coordenadas = font.render(
-        f"Apuntando: ({current_hand_x}, {current_hand_y})",
-        True,
-        (255, 255, 255)
-    )
-
-    screen.blit(
-        coordenadas,
-        (20, 55)
-    )
-
-
-    # =====================================================
-    # DIBUJAR PUNTERO DE LA MANO
-    # =====================================================
-
-    # Determinar posición del puntero: preferimos la mano si está disponible
-    pointer_pos = None
-    if current_hand_x != 0 and current_hand_y != 0:
-        pointer_pos = (current_hand_x, current_hand_y)
-
-    # Dibujar la mira (usa la clase `Mira` definida arriba) en la posición calculada
-    try:
-        mira.dibujar(screen, pointer_pos)
-    except NameError:
-        pass
-
-
-
-    # =====================================================
-    # ACTUALIZAR PANTALLA
-    # =====================================================
+    # La mira siempre por encima de todo
+    mira.explosiva = explosive_active
+    mira.disparando = local_trigger_shoot
+    mira.dibujar(screen, (cur_hand_x, cur_hand_y) if cur_hand_x != 0 else None)
 
     pygame.display.flip()
-
     clock.tick(60)
 
-
-# =========================================================
-# FINALIZAR
-# =========================================================
-
 running = False
-
 thread_camera.join(timeout=1)
-
 pygame.quit()
 cv2.destroyAllWindows()
