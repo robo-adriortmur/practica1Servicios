@@ -18,6 +18,21 @@ SPAWN_INTERVAL_MS = 4000
 TARGET_LIFETIME_MS = 10000 
 PENALTY_DAMAGE = 5
 
+# Constantes para las armas
+CADENCIA_METRALLETA = 0.15
+TIEMPO_RECARGA = 1.5
+MAX_BALAS_PISTOLA = 6
+MAX_BALAS_METRALLETA = 30
+
+
+#CONSTANTES PARA RECONOCIMIENTO DE GESTOS CON DISTANCIAS ABSOLUTAS
+DPULGARARRIBA = 1
+DPULGARABAJO = 0.5
+DMENIQUEARRIBA = 1.4
+DINDICEARRIBA = 1.6
+DMEDIOARRIBA = 1.5
+DANULARARRIBA = 1.5
+
 # Configuración del Inventario
 KILLS_PARA_ULTI = 5
 PROBABILIDAD_DROP = 0.4 # 40% de que caiga un objeto al matar un enemigo
@@ -51,8 +66,10 @@ try: pygame.mixer.init()
 except: pass
 try: expire_sound = pygame.mixer.Sound("media/expire.wav")
 except: expire_sound = None
-try: shoot_sound = pygame.mixer.Sound("media/pistola.mp3")
+try: shoot_sound = pygame.mixer.Sound("media/gunshot.wav")
 except: shoot_sound = None
+try: recharge_sound = pygame.mixer.Sound("media/recharge.wav")
+except: recharge_sound = None
 
 # Rutas preparadas para los iconos del inventario
 RUTAS_INVENTARIO = {
@@ -80,6 +97,9 @@ hand_x, hand_y = 0, 0
 trigger_shoot = False
 trigger_pause = False
 trigger_unpause = False
+recharge_weapon = False
+balas_pistola = MAX_BALAS_PISTOLA
+balas_metralleta = MAX_BALAS_METRALLETA
 items_usados_buffer = []
 
 # Estado del juego (Pygame -> Cámara)
@@ -90,6 +110,65 @@ game_paused = False
 # =========================================================
 def calcular_distancia(punto1, punto2):
     return math.hypot(punto1.x - punto2.x, punto1.y - punto2.y)
+
+# Detectar stop de forma absoluta
+def palma_abierta_abs(hand_landmarks) -> bool:
+
+    open_palm = False
+
+    lm = hand_landmarks.landmark
+
+    # Punta del pulgar
+    thumb_tip = lm[4]
+
+    # Punta del índice
+    index_tip = lm[8]
+
+    # Punta del meñique
+    pinky_tip = lm[20]
+
+    # Punta del corazón
+    middle_tip = lm[12]
+
+    # Punta del anular
+    ring_tip = lm[16]
+
+    # Referencia para normalizar el tamaño de la mano
+    wrist = lm[0]
+    middle_mcp = lm[9]
+
+    # calculamos la posicion de cada dedo con respecto a la muñeca
+
+    d_thumb_wrist = calcular_distancia(thumb_tip, wrist) #pulgar
+    d_pinky_wrist = calcular_distancia(pinky_tip, wrist) #meñique
+    d_index_wrist = calcular_distancia(index_tip, wrist) #indice
+    d_middle_wrist = calcular_distancia(middle_tip, wrist) #corazon
+    d_ring_wrist = calcular_distancia(ring_tip, wrist) #anular
+    
+    #Calculamos el tamaño de la palma de la mana a traves de muñeca-puntoMedio
+    hand_size = calcular_distancia(wrist,middle_mcp)
+
+    #Distancia relativa al tamaño de la mano
+    d_thumb_wrist = d_thumb_wrist / hand_size
+    d_pinky_wrist = d_pinky_wrist / hand_size
+    d_index_wrist = d_index_wrist / hand_size
+    d_middle_wrist = d_middle_wrist / hand_size
+    d_ring_wrist = d_ring_wrist / hand_size
+
+
+    #print("pulgar:")
+    #print(d_thumb_wrist)
+    #print("meñique:")
+    #print(d_pinky_wrist)
+    #print("indice:")
+    #print(d_index_wrist)
+
+    # Comprobamos cada lectura de distancia con lecturas previas absolutas para cualquier posición de la palma
+    if d_thumb_wrist > DPULGARARRIBA and d_pinky_wrist > DMENIQUEARRIBA and d_index_wrist > DINDICEARRIBA and d_ring_wrist > DANULARARRIBA and d_middle_wrist > DMEDIOARRIBA  :
+        open_palm = True
+
+    return open_palm
+
 
 def capturar_y_desenfocar(superficie_origen, factor=6):
     ancho, alto = superficie_origen.get_width(), superficie_origen.get_height()
@@ -199,20 +278,32 @@ class Mira:
 def camara_thread():
     global running, hand_x, hand_y, trigger_shoot, trigger_pause, trigger_unpause
 
+    global recharge_weapon, balas_pistola, balas_metralleta #para la logica de la recarga
+
     mp_hands = mp.solutions.hands
     mp_drawing = mp.solutions.drawing_utils
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
+    # Diccionario para manejar los nombres de las diferentes landmarks sintácticamente 
     nombres_objetos = {8: "Dedo Índice", 12: "Dedo Medio", 16: "Dedo Anular", 20: "Dedo Meñique"}
-    inventario_abierto = False
-    estado_dedos_doblados = {8: False, 12: False, 16: False, 20: False}
-    pulgar_listo_para_disparar = False
+
     
+    # Diccionario para manejar el estado de los dedos usando el diccionario de nombres
+    estado_dedos_doblados = {8: False, 12: False, 16: False, 20: False}
+
+    # variables de estado locales
+    inventario_abierto = False
+    pulgar_listo_para_disparar = False
+    listo_para_recargar = False
+
     tiempo_inicio_pausa = 0
     tiempo_inicio_reanudar = 0
+    time_ultimo_disparo = 0
+    time_ultima_recarga = 0
 
-    with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5, min_tracking_confidence=0.5) as hands:
-        while running:
+    #establecemos los parametros de detección de la mano
+    with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5, min_tracking_confidence=0.5) as hands: 
+        while running: # BUCLE PRINCIPAL 
             ret, frame = cap.read()
             if not ret: break
 
@@ -223,62 +314,93 @@ def camara_thread():
             with lock:
                 estado_pausa = game_paused
 
-            if resultados.multi_hand_landmarks and resultados.multi_handedness:
-                mano = resultados.multi_hand_landmarks[0]
+            if resultados.multi_hand_landmarks and resultados.multi_handedness: #si existen resultados de la mano los evaluamos
+                mano = resultados.multi_hand_landmarks[0] #mano detectada
                 etiqueta_mano = resultados.multi_handedness[0].classification[0].label
-                mp_drawing.draw_landmarks(frame, mano, mp_hands.HAND_CONNECTIONS)
+                mp_drawing.draw_landmarks(frame, mano, mp_hands.HAND_CONNECTIONS) #dibujamos los landmarks para referencia 
                 
-                puntos = mano.landmark
-                muneca = puntos[0]
+                puntos = mano.landmark 
+                muneca = puntos[0] #punto de referencia de la muñeca
 
                 with lock:
-                    hand_x, hand_y = int(puntos[8].x * WIDTH), int(puntos[8].y * HEIGHT)
+                    hand_x, hand_y = int(puntos[8].x * WIDTH), int(puntos[8].y * HEIGHT) #acotamos distancia de la mano
 
+                #Calculamos la distancia relativa entre los puntos de la mano
+
+                #El indice está extendido si la primera falange queda detras de la punta del mismo
                 indice_ext = calcular_distancia(puntos[8], muneca) > calcular_distancia(puntos[6], muneca)
+
+                #El dedo corazón está extendido si la primera falange del mismo queda detás de la punta
                 medio_ext = calcular_distancia(puntos[12], muneca) > calcular_distancia(puntos[10], muneca)
+
+                #Misma lógica para el anular
                 anular_ext = calcular_distancia(puntos[16], muneca) > calcular_distancia(puntos[14], muneca)
+
+                #Misma lógica para el meñique
                 menique_ext = calcular_distancia(puntos[20], muneca) > calcular_distancia(puntos[18], muneca)
-                
-                es_palma_abierta = indice_ext and medio_ext and anular_ext and menique_ext
+
+                #comprobamos también usando la distancia absoluta con valores precalculados
+                #es_palma_abierta_abs = palma_abierta_abs(mano)
+
+                #la palma está abierta si consideramos todos los dedos menos el pulgar extendidos
+                es_palma_abierta = indice_ext and medio_ext and anular_ext and menique_ext #and es_palma_abierta_abs
+
+                #El puño lo considereamos cerrado o semicerrado si los dedos no están extendidos
                 es_puno_cerrado = not (indice_ext or medio_ext or anular_ext or menique_ext)
 
                 if estado_pausa:
                     cv2.putText(frame, "JUEGO PAUSADO: Mantenga puno cerrado para salir", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-                    if es_puno_cerrado:
-                        if tiempo_inicio_reanudar == 0: tiempo_inicio_reanudar = time.time()
-                        elapsed = time.time() - tiempo_inicio_reanudar
-                        cv2.putText(frame, f"Reanudando... {int((elapsed/2)*100)}%", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                    if es_puno_cerrado: #comprabamos durante el estado de pausa si se ha cerrado el puño
+
+                        if tiempo_inicio_reanudar == 0: tiempo_inicio_reanudar = time.time() #si está cerrado miramos el timer mientras el puño está cerrado
+                        elapsed = time.time() - tiempo_inicio_reanudar # t_puño_cerrado para t_estado_pausa
+
+                        #imprimimos una barra de progreso simple
+                        cv2.putText(frame, f"Reanudando... {int((elapsed/2)*100)}%", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2) 
                         
-                        if elapsed >= 2.0:
+                        if elapsed >= 2.0: #si se cumple que el tiempo llega al tiempo de espera se reanuda
                             print("\n[+] JUEGO REANUDADO")
-                            with lock: trigger_unpause = True
+                            with lock: trigger_unpause = True #lock para el thread 
                             tiempo_inicio_reanudar = 0
                     else:
-                        tiempo_inicio_reanudar = 0
+                        tiempo_inicio_reanudar = 0 
                 
-                else:
-                    mcp_medio = puntos[9]
-                    es_horizontal = abs(mcp_medio.x - muneca.x) > 1.2 * abs(mcp_medio.y - muneca.y)
+                else: 
+                    mcp_medio = puntos[9] #punto medio de la mano
+
+                    #usamos el punto medio y lo comparamos con la muñeca, si su posición x es mayor está lado
+                    es_horizontal = abs(mcp_medio.x - muneca.x) > 1.2 * abs(mcp_medio.y - muneca.y)# el 1.2 le añade tolerancia
+
+                    #el dorso está para arriba si el pulgar queda por encima
                     dorso_hacia_camara = puntos[2].y < puntos[17].y
 
-                    estado_anterior_inv = inventario_abierto
+                    estado_anterior_inv = inventario_abierto #estado anterior para comparar si se abre o si de cierra
+
+                    #el inventario queda abieto si: (palma_abierta) + mano_horizontal + dorso_hacia_la_camara
                     inventario_abierto = es_horizontal and dorso_hacia_camara
 
-                    if inventario_abierto and not estado_anterior_inv: print("\n[+] INVENTARIO ABIERTO")
-                    elif not inventario_abierto and estado_anterior_inv: print("[-] INVENTARIO CERRADO")
+                    if inventario_abierto and not estado_anterior_inv: print("\n[+] INVENTARIO ABIERTO") #abrir inventario si no estaba abierto
+                    elif not inventario_abierto and estado_anterior_inv: print("[-] INVENTARIO CERRADO") #cerrar inventario si estaba abierto
 
-                    if inventario_abierto:
-                        tiempo_inicio_pausa = 0
-                        pulgar_listo_para_disparar = False
+                    #-----LOGICA INVENTARIO------
+
+                    if inventario_abierto: 
+                        tiempo_inicio_pausa = 0 #para pausar el juego inciamos el contador de pausa
+                        pulgar_listo_para_disparar = False #variable que indica posicion del pulgar
                         
                         cv2.putText(frame, "INVENTARIO ACTIVO", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+                        #Para el inventario tenemos en cuenta las puntas de los dedos a excepción del pulgar
                         puntas_dedos = [8, 12, 16, 20]
-                        for punta_idx in puntas_dedos:
+
+                        for punta_idx in puntas_dedos: #iteramos para cada punta para comprobar su estado
+
+                            #vemos si la punta del dedo está doblada para seleccionar un item
                             dedo_doblado = calcular_distancia(puntos[punta_idx], muneca) < calcular_distancia(puntos[punta_idx - 2], muneca)
-                            if dedo_doblado and not estado_dedos_doblados[punta_idx]:
-                                print(f"   -> Usando gesto: {nombres_objetos[punta_idx]}")
+                            if dedo_doblado and not estado_dedos_doblados[punta_idx]: #unicamente un gesto por ciclo, pero dentro del inventario podemos activar varios
+                                print(f"   -> Usando gesto: {nombres_objetos[punta_idx]}") #imprimos del diccionario la información
                                 with lock:
-                                    items_usados_buffer.append(punta_idx) 
+                                    items_usados_buffer.append(punta_idx) #buffer de items usados simultáneamente
                             estado_dedos_doblados[punta_idx] = dedo_doblado
 
                     else:
@@ -299,22 +421,77 @@ def camara_thread():
                             es_mano_derecha = (etiqueta_mano == "Right")
                             palma_de_frente = puntos[5].x < puntos[17].x 
                             gesto_pistola = indice_ext and not medio_ext and not anular_ext and not menique_ext
+                            gesto_metralleta = indice_ext and medio_ext and not anular_ext and not menique_ext
 
-                            if es_mano_derecha and palma_de_frente and gesto_pistola:
-                                cv2.putText(frame, "ARMA LISTA", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+                            if es_mano_derecha and palma_de_frente and (gesto_pistola or gesto_metralleta):
+
+                                if gesto_pistola : #el gesto de metralleta incluye el gesto de pistola
+                                    cv2.putText(frame, "PISTOLA LISTA", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+                                elif gesto_metralleta :
+                                    cv2.putText(frame, "METRALLETA  LISTA", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+
+                                #Comprabamos si el gatillo está levantado
                                 pulgar_extendido = puntos[4].x < puntos[3].x
                                 
                                 if pulgar_extendido:
                                     pulgar_listo_para_disparar = True
                                     cv2.putText(frame, "Gatillo: Listo", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                                 else:
-                                    if pulgar_listo_para_disparar:
-                                        print("[!] PUM! Disparo efectuado")
-                                        with lock: trigger_shoot = True
-                                        pulgar_listo_para_disparar = False
                                     cv2.putText(frame, "Gatillo: Apretado", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                                    tiempo_actual = time.time()
+
+                                    if gesto_pistola : #para la pistola un único trigger por gesto
+                                        if pulgar_listo_para_disparar and balas_pistola > 0:
+                                            print("[!] PUM! Disparo efectuado")
+                                            
+                                            with lock: 
+                                                trigger_shoot = True
+                                                balas_pistola -= 1
+                                            pulgar_listo_para_disparar = False
+
+                                    elif gesto_metralleta and balas_metralleta > 0:
+                                        #para la metralleta disparamos con cooldown
+                                        if tiempo_actual - time_ultimo_disparo > CADENCIA_METRALLETA:
+                                            print("[!] RATATATA! Disparo de Metralleta")
+
+                                            with lock: 
+                                                trigger_shoot = True #mantenemos a true la flag de trigger y de pulgar
+                                                balas_metralleta -= 1
+                                            time_ultimo_disparo = tiempo_actual         
                             else:
                                 pulgar_listo_para_disparar = False
+
+                            #Puño cerrado para recargar fuera del estado de pausa
+                            if es_puno_cerrado:
+                                
+
+                                #Solo recarga una vez por gesto -> similar al trigger de la pistola
+                                if listo_para_recargar and (tiempo_actual - time_ultima_recarga > TIEMPO_RECARGA):
+                                    
+                                    with lock: #para imprimir las balas recargadas en el hilo principal de pygame
+                                        recharge_weapon = True
+                                    if recharge_sound: #sonido solo una vez por recarga
+                                        try:
+                                            recharge_sound.play()
+                                        except Exception:
+                                            pass
+
+                                    balas_pistola = MAX_BALAS_PISTOLA #recargamos la pistola (podriamos poner que recargue solo la que se esté usando, pero para simplificar recargamos ambas)
+                                    balas_metralleta = MAX_BALAS_METRALLETA #recargamos la metralleta
+                                    time_ultima_recarga = tiempo_actual
+                                    listo_para_recargar = False  #requiere abrir la mano para volver a activar
+
+                                else : 
+                                    if balas_pistola == MAX_BALAS_PISTOLA and balas_metralleta == MAX_BALAS_METRALLETA: #arma ya recargada
+                                        cv2.putText(frame, "Arma recargada", (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                                
+
+                            else:
+                                # Cuando el usuario abre la mano, rearmamos el mecanismo para la próxima recarga
+                                listo_para_recargar = True
+                                                            
+
+                            
 
             cv2.imshow("Camara - MediaPipe", frame)
             if cv2.waitKey(1) & 0xFF == 27:
