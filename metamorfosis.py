@@ -6,9 +6,7 @@ import cv2
 import threading
 import time
 
-# =========================================================
 # CONFIGURACIÓN DEL JUEGO
-# =========================================================
 WIDTH = 850
 HEIGHT = 600
 
@@ -48,9 +46,7 @@ font = pygame.font.Font(None, 36)
 font_small = pygame.font.Font(None, 24)
 font_menu = pygame.font.Font(None, 72) 
 
-# =========================================================
 # CARGA DE RECURSOS E IMÁGENES
-# =========================================================
 try: background = pygame.transform.scale(pygame.image.load("media/Valle.jpg").convert(), (WIDTH, HEIGHT))
 except: background = pygame.Surface((WIDTH, HEIGHT)); background.fill((50, 80, 120))
 
@@ -87,9 +83,7 @@ for key, ruta in RUTAS_INVENTARIO.items():
     except:
         imagenes_inventario[key] = None
 
-# =========================================================
 # VARIABLES COMPARTIDAS (HILOS)
-# =========================================================
 lock = threading.Lock()
 running = True
 
@@ -107,9 +101,7 @@ items_usados_buffer = []
 # Estado del juego (Pygame -> Cámara)
 game_paused = False
 
-# =========================================================
 # FUNCIONES AUXILIARES Y CLASES
-# =========================================================
 def calcular_distancia(punto1, punto2):
     return math.hypot(punto1.x - punto2.x, punto1.y - punto2.y)
 
@@ -274,9 +266,7 @@ class Mira:
             # Punto rojo central siempre presente
             pygame.draw.circle(superficie, (255, 0, 0), pos, 3)
 
-# =========================================================
 # HILO DE MEDIAPIPE (GESTOS Y ESTADOS)
-# =========================================================
 def camara_thread():
     global running, hand_x, hand_y, trigger_shoot, trigger_pause, trigger_unpause
 
@@ -507,9 +497,8 @@ def camara_thread():
     cap.release()
     cv2.destroyAllWindows()
 
-# =========================================================
+
 # INICIALIZACIÓN DE BUCLE PRINCIPAL
-# =========================================================
 thread_camera = threading.Thread(target=camara_thread)
 thread_camera.daemon = True
 thread_camera.start()
@@ -567,9 +556,7 @@ while running:
         try: shoot_sound.play()
         except: pass
 
-    # =====================================================
     # LOGICA DE USO DEL INVENTARIO
-    # =====================================================
     for item in items_a_usar:
         if cantidades_inventario[item] > 0:
             cantidades_inventario[item] -= 1
@@ -593,9 +580,7 @@ while running:
             mensajes_visuales.append({"text": "No tienes ese objeto", "time": current_time, "color": (255, 50, 50)})
 
 
-    # =====================================================
     # CONTROL DE ESTADOS DE PYGAME Y TIEMPOS ACTIVOS
-    # =====================================================
     if barra_jugador.vida_actual <= 0:
         screen.blit(capturar_y_desenfocar(screen), (0, 0))
         txt = font_menu.render("GAME OVER", True, (255, 50, 50))
@@ -633,9 +618,7 @@ while running:
             # Spawn con margen de 50px
             targets.append({"x": random.randint(TARGET_RADIUS + 50, WIDTH - TARGET_RADIUS - 50), "y": random.randint(TARGET_RADIUS + 60, HEIGHT - TARGET_RADIUS - 150), "spawn_time": current_time})
 
-    # =====================================================
     # RENDERIZADO PRINCIPAL Y LÓGICA DE HIT MULTIPLE
-    # =====================================================
     if game_paused:
         screen.blit(pause_background, (0, 0))
         if pause_sprite: screen.blit(pause_sprite, pause_sprite.get_rect(center=(WIDTH//2, HEIGHT//2 - 50)))
@@ -716,9 +699,7 @@ while running:
         if disparo_consumido:
             local_trigger_shoot = False
 
-        # ==================================
         # DIBUJADO EN PANTALLA
-        # ==================================
         screen.blit(background, (0, 0))
         
         # Filtro Azul del Escudo
