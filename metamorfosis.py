@@ -12,6 +12,7 @@ import time
 WIDTH = 850
 HEIGHT = 600
 
+# Constantes para las dianas
 TARGET_RADIUS = 40
 MAX_TARGETS = 8          
 SPAWN_INTERVAL_MS = 4000   
@@ -25,7 +26,7 @@ MAX_BALAS_PISTOLA = 6
 MAX_BALAS_METRALLETA = 30
 
 
-#CONSTANTES PARA RECONOCIMIENTO DE GESTOS CON DISTANCIAS ABSOLUTAS
+# CONSTANTES PARA RECONOCIMIENTO DE GESTOS CON DISTANCIAS ABSOLUTAS
 DPULGARARRIBA = 1
 DPULGARABAJO = 0.5
 DMENIQUEARRIBA = 1.4
@@ -35,7 +36,7 @@ DANULARARRIBA = 1.5
 
 # Configuración del Inventario
 KILLS_PARA_ULTI = 5
-PROBABILIDAD_DROP = 0.4 # 40% de que caiga un objeto al matar un enemigo
+PROBABILIDAD_DROP = 0.4 # 40% de probabilidad que caiga un objeto al matar un enemigo
 
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -100,7 +101,7 @@ trigger_unpause = False
 recharge_weapon = False
 balas_pistola = MAX_BALAS_PISTOLA
 balas_metralleta = MAX_BALAS_METRALLETA
-arma_activa = "Pistola" # <--- NUEVA VARIABLE PARA LA UI
+arma_activa = "Pistola"
 items_usados_buffer = []
 
 # Estado del juego (Pygame -> Cámara)
@@ -279,7 +280,7 @@ class Mira:
 def camara_thread():
     global running, hand_x, hand_y, trigger_shoot, trigger_pause, trigger_unpause
 
-    global recharge_weapon, balas_pistola, balas_metralleta, arma_activa # <--- MODIFICADO: Añadido arma_activa
+    global recharge_weapon, balas_pistola, balas_metralleta, arma_activa
 
     mp_hands = mp.solutions.hands
     mp_drawing = mp.solutions.drawing_utils
@@ -430,10 +431,10 @@ def camara_thread():
 
                                 if gesto_pistola : #el gesto de metralleta incluye el gesto de pistola
                                     cv2.putText(frame, "PISTOLA LISTA", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
-                                    with lock: arma_activa = "Pistola" # <--- MODIFICADO: Actualiza el HUD
+                                    with lock: arma_activa = "Pistola"
                                 elif gesto_metralleta :
                                     cv2.putText(frame, "METRALLETA  LISTA", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
-                                    with lock: arma_activa = "Metralleta" # <--- MODIFICADO: Actualiza el HUD
+                                    with lock: arma_activa = "Metralleta"
 
                                 #Comprabamos si el gatillo está levantado
                                 pulgar_extendido = puntos[4].x < puntos[3].x
@@ -551,9 +552,9 @@ while running:
         local_trigger_pause = trigger_pause
         local_trigger_unpause = trigger_unpause
         
-        local_balas_pistola = balas_pistola       # <--- MODIFICADO: Extraer balas en local
-        local_balas_metralleta = balas_metralleta # <--- MODIFICADO: Extraer balas en local
-        local_arma_activa = arma_activa           # <--- MODIFICADO: Extraer estado del arma
+        local_balas_pistola = balas_pistola
+        local_balas_metralleta = balas_metralleta
+        local_arma_activa = arma_activa
         
         items_a_usar = list(items_usados_buffer)
         items_usados_buffer.clear()
@@ -775,7 +776,7 @@ while running:
         # Puntuación y HUD Original
         screen.blit(font.render(f"Puntuación: {puntuacion_total}", True, (255, 255, 255)), (20, 20))
         
-        # <--- MODIFICADO: DIBUJADO DE UI DE ARMAS --->
+        # DIBUJADO DE UI DE ARMAS
         if local_arma_activa == "Pistola":
             txt_arma = font_small.render("Arma activa: Pistola", True, (200, 220, 255))
             # Si se queda sin balas, se pone rojo para alertar visualmente
@@ -788,7 +789,6 @@ while running:
 
         screen.blit(txt_arma, (20, 55))
         screen.blit(txt_municion, (20, 75))
-        # <--- FIN MODIFICADO --->
 
         hud_inventario.dibujar(screen, cantidades_inventario, kills_para_ulti_actual)
         barra_jugador.dibujar(screen)
