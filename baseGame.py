@@ -301,6 +301,8 @@ def camara_thread():
     time_ultimo_disparo = 0
     time_ultima_recarga = 0
 
+    tiempo_actual = 0
+
     #establecemos los parametros de detección de la mano
     with mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5, min_tracking_confidence=0.5) as hands: 
         while running: # BUCLE PRINCIPAL 
